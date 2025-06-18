@@ -367,22 +367,59 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                                 }
                                             }
                                             "POLYGON" => {
-                                                // Parse polygon coordinates - all coordinates for this polygon are on this line
+                                                // Parse polygon coordinates - may span multiple lines
                                                 let mut points = Vec::new();
-                                                let mut coord_idx = 1;
+                                                let mut mask_num: Option<i32> = None;
 
-                                                // Parse all coordinate pairs on this line
-                                                while coord_idx + 1 < port_parts.len() {
+                                                // Collect all POLYGON content across multiple lines until semicolon
+                                                let mut polygon_content = String::new();
+                                                polygon_content.push_str(port_line);
+
+                                                // Continue collecting until we find a semicolon
+                                                let mut poly_i = i + 1;
+                                                while !polygon_content.contains(';')
+                                                    && poly_i < lines.len()
+                                                {
+                                                    polygon_content.push(' ');
+                                                    polygon_content.push_str(lines[poly_i].trim());
+                                                    poly_i += 1;
+                                                }
+
+                                                // Update main loop index
+                                                i = poly_i - 1;
+
+                                                // Parse all content
+                                                let poly_parts: Vec<&str> =
+                                                    polygon_content.split_whitespace().collect();
+                                                let mut part_idx = 1; // Skip "POLYGON"
+
+                                                // Check for MASK
+                                                if part_idx < poly_parts.len()
+                                                    && poly_parts[part_idx] == "MASK"
+                                                {
+                                                    part_idx += 1;
+                                                    if part_idx < poly_parts.len() {
+                                                        if let Ok(mask) =
+                                                            poly_parts[part_idx].parse::<i32>()
+                                                        {
+                                                            mask_num = Some(mask);
+                                                        }
+                                                        part_idx += 1;
+                                                    }
+                                                }
+
+                                                // Parse coordinate pairs
+                                                while part_idx + 1 < poly_parts.len() {
                                                     let x_str =
-                                                        port_parts[coord_idx].trim_end_matches(';');
-                                                    let y_str = port_parts[coord_idx + 1]
+                                                        poly_parts[part_idx].trim_end_matches(';');
+                                                    let y_str = poly_parts[part_idx + 1]
                                                         .trim_end_matches(';');
 
                                                     if let (Ok(x), Ok(y)) =
                                                         (x_str.parse::<f64>(), y_str.parse::<f64>())
                                                     {
                                                         points.push((x, y));
-                                                        coord_idx += 2;
+                                                        part_idx += 2;
                                                     } else {
                                                         break;
                                                     }
@@ -396,9 +433,10 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                                         points,
                                                         is_hole,
                                                     });
-                                                    println!("🔧       Added polygon on {} with {} points ({}): {:?}", 
+                                                    println!("🔧       Added polygon on {} with {} points ({}){}: {:?}", 
                                                            current_layer, polygons.last().unwrap().points.len(),
                                                            if is_hole { "hole" } else { "solid" },
+                                                           if let Some(mask) = mask_num { format!(" MASK {}", mask) } else { String::new() },
                                                            polygons.last().unwrap().points);
                                                 }
                                             }
@@ -468,20 +506,51 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                 }
                             }
                             "POLYGON" => {
-                                // Parse polygon coordinates - all coordinates for this polygon are on this line
+                                // Parse polygon coordinates - may span multiple lines
                                 let mut points = Vec::new();
-                                let mut coord_idx = 1;
+                                let mut mask_num: Option<i32> = None;
 
-                                // Parse all coordinate pairs on this line
-                                while coord_idx + 1 < obs_parts.len() {
-                                    let x_str = obs_parts[coord_idx].trim_end_matches(';');
-                                    let y_str = obs_parts[coord_idx + 1].trim_end_matches(';');
+                                // Collect all POLYGON content across multiple lines until semicolon
+                                let mut polygon_content = String::new();
+                                polygon_content.push_str(obs_line);
+
+                                // Continue collecting until we find a semicolon
+                                let mut poly_i = i + 1;
+                                while !polygon_content.contains(';') && poly_i < lines.len() {
+                                    polygon_content.push(' ');
+                                    polygon_content.push_str(lines[poly_i].trim());
+                                    poly_i += 1;
+                                }
+
+                                // Update main loop index
+                                i = poly_i - 1;
+
+                                // Parse all content
+                                let poly_parts: Vec<&str> =
+                                    polygon_content.split_whitespace().collect();
+                                let mut part_idx = 1; // Skip "POLYGON"
+
+                                // Check for MASK
+                                if part_idx < poly_parts.len() && poly_parts[part_idx] == "MASK" {
+                                    part_idx += 1;
+                                    if part_idx < poly_parts.len() {
+                                        if let Ok(mask) = poly_parts[part_idx].parse::<i32>() {
+                                            mask_num = Some(mask);
+                                        }
+                                        part_idx += 1;
+                                    }
+                                }
+
+                                // Parse coordinate pairs
+                                while part_idx + 1 < poly_parts.len() {
+                                    let x_str = poly_parts[part_idx].trim_end_matches(';');
+                                    let y_str = poly_parts[part_idx + 1].trim_end_matches(';');
 
                                     if let (Ok(x), Ok(y)) =
                                         (x_str.parse::<f64>(), y_str.parse::<f64>())
                                     {
                                         points.push((x, y));
-                                        coord_idx += 2;
+                                        part_idx += 2;
                                     } else {
                                         break;
                                     }
@@ -495,10 +564,11 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                         is_hole,
                                     });
                                     println!(
-                                        "🔧     Added OBS polygon on {} with {} points ({}): {:?}",
+                                        "🔧     Added OBS polygon on {} with {} points ({}){}: {:?}",
                                         current_layer,
                                         polygons.last().unwrap().points.len(),
                                         if is_hole { "hole" } else { "solid" },
+                                        if let Some(mask) = mask_num { format!(" MASK {}", mask) } else { String::new() },
                                         polygons.last().unwrap().points
                                     );
                                 }
