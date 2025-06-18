@@ -7,6 +7,7 @@ use geo::{Coord, LineString, Polygon as GeoPolygon};
 use rfd::FileDialog;
 
 use crate::def::{reader::DefReader, Def};
+use crate::export;
 use crate::lef::{reader::LefReader, Lef};
 
 #[derive(Default)]
@@ -769,6 +770,29 @@ impl LefDefViewer {
         }
     }
 
+    fn handle_export_lef_csv(&mut self) {
+        if let Some(lef_data) = &self.lef_data {
+            if let Some(file_path) = FileDialog::new()
+                .set_file_name("lef_macros.csv")
+                .add_filter("CSV files", &["csv"])
+                .save_file()
+            {
+                match export::export_lef_to_csv(lef_data, &file_path.to_string_lossy()) {
+                    Ok(()) => {
+                        self.error_message = Some(format!(
+                            "Successfully exported {} macros to CSV file: {}",
+                            lef_data.macros.len(),
+                            file_path.display()
+                        ));
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Failed to export CSV: {}", e));
+                    }
+                }
+            }
+        }
+    }
+
     fn render_menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
@@ -789,6 +813,19 @@ impl LefDefViewer {
                     {
                         self.load_def_file(path.to_string_lossy().to_string());
                     }
+                    ui.close_menu();
+                }
+
+                ui.separator();
+
+                if ui
+                    .add_enabled(
+                        self.lef_data.is_some(),
+                        egui::Button::new("Export LEF to CSV"),
+                    )
+                    .clicked()
+                {
+                    self.handle_export_lef_csv();
                     ui.close_menu();
                 }
 

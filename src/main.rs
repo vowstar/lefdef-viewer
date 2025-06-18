@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2025 Huang Rui <vowstar@gmail.com>
 
 mod def;
+mod export;
 mod gui;
 mod lef;
 
