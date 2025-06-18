@@ -114,6 +114,10 @@ impl LefDefViewer {
                 egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180),
                 (1.0, 1.0, 1.0, 1.0),
             ), // White for outline
+            "LABEL" => (
+                egui::Color32::from_rgba_unmultiplied(255, 255, 255, 255),
+                (1.0, 1.0, 1.0, 1.0),
+            ), // White for text labels
             _ => (
                 egui::Color32::from_rgba_unmultiplied(160, 160, 160, 180),
                 (1.0, 1.0, 1.0, 1.0),
@@ -635,9 +639,15 @@ impl LefDefViewer {
                 self.all_layers.clear();
                 self.visible_layers.clear();
 
-                // Add outline layer
+                // Add virtual layers
                 self.all_layers.insert("OUTLINE".to_string());
                 self.visible_layers.insert("OUTLINE".to_string());
+
+                // Add LABEL virtual layer for PIN text control
+                self.all_layers.insert("LABEL".to_string());
+                if self.show_pin_text {
+                    self.visible_layers.insert("LABEL".to_string());
+                }
 
                 for macro_def in &lef.macros {
                     for pin in &macro_def.pins {
@@ -775,7 +785,16 @@ impl LefDefViewer {
                 ui.checkbox(&mut self.show_def_details, "Show DEF Details");
                 ui.checkbox(&mut self.show_layers_panel, "Show Layers Panel");
                 ui.separator();
-                ui.checkbox(&mut self.show_pin_text, "Show PIN Text");
+                // Sync show_pin_text with LABEL layer visibility
+                let mut label_visible = self.visible_layers.contains("LABEL");
+                if ui.checkbox(&mut label_visible, "Show PIN Text").clicked() {
+                    if label_visible {
+                        self.visible_layers.insert("LABEL".to_string());
+                    } else {
+                        self.visible_layers.remove("LABEL");
+                    }
+                    self.show_pin_text = label_visible;
+                }
             });
         });
     }
@@ -1094,8 +1113,11 @@ impl LefDefViewer {
                         }
                     }
 
-                    // Add PIN text once per pin if enabled, zoom is high enough, and pin has visible shapes
-                    if self.show_pin_text && self.zoom > 0.5 && has_visible_shapes {
+                    // Add PIN text once per pin if LABEL layer is visible, zoom is high enough, and pin has visible shapes
+                    if self.visible_layers.contains("LABEL")
+                        && self.zoom > 0.5
+                        && has_visible_shapes
+                    {
                         if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
                             let pin_center =
                                 egui::pos2((min_x + max_x) * 0.5, (min_y + max_y) * 0.5);
@@ -1405,10 +1427,14 @@ impl LefDefViewer {
                 let mut all_layers: Vec<String> = self.all_layers.iter().cloned().collect();
                 all_layers.sort();
 
-                // Ensure OUTLINE is always first
+                // Ensure OUTLINE is always first and LABEL is second
                 if let Some(outline_pos) = all_layers.iter().position(|layer| layer == "OUTLINE") {
                     let outline = all_layers.remove(outline_pos);
                     all_layers.insert(0, outline);
+                }
+                if let Some(label_pos) = all_layers.iter().position(|layer| layer == "LABEL") {
+                    let label = all_layers.remove(label_pos);
+                    all_layers.insert(1, label);
                 }
 
                 egui::ScrollArea::vertical()
@@ -1434,6 +1460,11 @@ impl LefDefViewer {
                                     } else {
                                         self.visible_layers.remove(layer);
                                     }
+
+                                    // Sync show_pin_text when LABEL layer visibility changes
+                                    if layer == "LABEL" {
+                                        self.show_pin_text = is_visible;
+                                    }
                                 }
                             });
                         }
@@ -1446,9 +1477,13 @@ impl LefDefViewer {
                         for layer in &all_layers {
                             self.visible_layers.insert(layer.clone());
                         }
+                        // Sync show_pin_text when showing all layers
+                        self.show_pin_text = true;
                     }
                     if ui.button("Hide All").clicked() {
                         self.visible_layers.clear();
+                        // Sync show_pin_text when hiding all layers
+                        self.show_pin_text = false;
                     }
                 });
 
