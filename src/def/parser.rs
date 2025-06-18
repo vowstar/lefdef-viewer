@@ -13,7 +13,7 @@ use nom::{
     IResult,
 };
 
-use super::{Def, DefGCellGrid};
+use super::{Def, DefGCellGrid, DefPolygon, DefVia, DefViaLayer};
 
 fn identifier(input: &str) -> IResult<&str, &str> {
     take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '.' || c == '/' || c == '-')(
@@ -93,6 +93,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
     let mut components = Vec::new();
     let mut pins = Vec::new();
     let mut nets = Vec::new();
+    let mut vias = Vec::new();
 
     let lines: Vec<&str> = input.lines().collect();
     let mut i = 0;
@@ -516,6 +517,224 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                     }
                 }
             }
+            "VIAS" if parts.len() > 1 => {
+                if let Ok(num_vias) = parts[1].parse::<usize>() {
+                    println!("🔧   Found VIAS section with {} vias", num_vias);
+                    i += 1;
+
+                    // Parse vias until END VIAS
+                    while i < lines.len() {
+                        let via_line = lines[i].trim();
+                        if via_line.starts_with("END VIAS") {
+                            break;
+                        }
+
+                        let via_parts: Vec<&str> = via_line.split_whitespace().collect();
+                        if via_parts.len() >= 2 && via_parts[0] == "-" {
+                            // Via definition: - viaName
+                            let via_name = via_parts[1].to_string();
+                            println!("🔧     Parsing VIA: {}", via_name);
+
+                            let mut layers = Vec::new();
+
+                            i += 1;
+                            // Parse via content until next via or END VIAS
+                            while i < lines.len() {
+                                let via_content_line = lines[i].trim();
+                                if via_content_line.starts_with("END VIAS")
+                                    || (via_content_line.starts_with('-')
+                                        && via_content_line.len() > 1)
+                                {
+                                    break;
+                                }
+
+                                let content_parts: Vec<&str> =
+                                    via_content_line.split_whitespace().collect();
+                                if !content_parts.is_empty() && content_parts[0] == "+" {
+                                    // Layer-specific definition
+                                    if content_parts.len() >= 2 {
+                                        match content_parts[1] {
+                                            "RECT" => {
+                                                // + RECT layerName ( xl yl ) ( xh yh )
+                                                if content_parts.len() >= 8 {
+                                                    let layer_name = content_parts[2].to_string();
+                                                    if let (Ok(xl), Ok(yl), Ok(xh), Ok(yh)) = (
+                                                        content_parts[4].parse::<f64>(),
+                                                        content_parts[5].parse::<f64>(),
+                                                        content_parts[7].parse::<f64>(),
+                                                        content_parts[8].parse::<f64>(),
+                                                    ) {
+                                                        // Find or create layer
+                                                        let layer_index = layers.iter().position(
+                                                            |l: &DefViaLayer| {
+                                                                l.layer_name == layer_name
+                                                            },
+                                                        );
+
+                                                        if let Some(idx) = layer_index {
+                                                            layers[idx].rects.push(
+                                                                crate::def::DefRect {
+                                                                    layer: layer_name.clone(),
+                                                                    xl,
+                                                                    yl,
+                                                                    xh,
+                                                                    yh,
+                                                                },
+                                                            );
+                                                        } else {
+                                                            let mut new_layer = DefViaLayer {
+                                                                layer_name: layer_name.clone(),
+                                                                mask: None,
+                                                                rects: Vec::new(),
+                                                                polygons: Vec::new(),
+                                                            };
+                                                            new_layer.rects.push(
+                                                                crate::def::DefRect {
+                                                                    layer: layer_name,
+                                                                    xl,
+                                                                    yl,
+                                                                    xh,
+                                                                    yh,
+                                                                },
+                                                            );
+                                                            layers.push(new_layer);
+                                                        }
+
+                                                        println!("🔧       Added RECT on layer {} at ({:.1},{:.1}) -> ({:.1},{:.1})", 
+                                                               content_parts[2], xl, yl, xh, yh);
+                                                    }
+                                                }
+                                            }
+                                            "POLYGON" => {
+                                                // + POLYGON layerName [+ MASK maskNum] ( x1 y1 ) ( x2 y2 ) ...
+                                                if content_parts.len() >= 3 {
+                                                    let layer_name = content_parts[2].to_string();
+                                                    let mut mask_num: Option<i32> = None;
+
+                                                    // Collect all POLYGON content across multiple lines until semicolon
+                                                    let mut polygon_content = String::new();
+                                                    polygon_content.push_str(via_content_line);
+
+                                                    // Continue collecting until we find a semicolon
+                                                    let mut poly_i = i + 1;
+                                                    while !polygon_content.contains(';')
+                                                        && poly_i < lines.len()
+                                                    {
+                                                        let next_line = lines[poly_i].trim();
+                                                        // Stop if we hit next via definition or END VIAS
+                                                        if next_line.starts_with('-')
+                                                            || next_line.starts_with("END VIAS")
+                                                        {
+                                                            break;
+                                                        }
+                                                        polygon_content.push(' ');
+                                                        polygon_content.push_str(next_line);
+                                                        poly_i += 1;
+                                                    }
+
+                                                    // Update main loop index
+                                                    i = poly_i - 1;
+
+                                                    // Parse all content
+                                                    let poly_parts: Vec<&str> = polygon_content
+                                                        .split_whitespace()
+                                                        .collect();
+                                                    let mut part_idx = 3; // Skip "+ POLYGON layerName"
+
+                                                    // Check for MASK
+                                                    if part_idx < poly_parts.len()
+                                                        && poly_parts[part_idx] == "+"
+                                                        && part_idx + 1 < poly_parts.len()
+                                                        && poly_parts[part_idx + 1] == "MASK"
+                                                    {
+                                                        part_idx += 2;
+                                                        if part_idx < poly_parts.len() {
+                                                            if let Ok(mask) =
+                                                                poly_parts[part_idx].parse::<i32>()
+                                                            {
+                                                                mask_num = Some(mask);
+                                                            }
+                                                            part_idx += 1;
+                                                        }
+                                                    }
+
+                                                    // Parse coordinate pairs within parentheses
+                                                    let mut points = Vec::new();
+                                                    while part_idx < poly_parts.len() {
+                                                        if poly_parts[part_idx] == "("
+                                                            && part_idx + 3 < poly_parts.len()
+                                                            && poly_parts[part_idx + 3] == ")"
+                                                        {
+                                                            if let (Ok(x), Ok(y)) = (
+                                                                poly_parts[part_idx + 1]
+                                                                    .parse::<f64>(),
+                                                                poly_parts[part_idx + 2]
+                                                                    .parse::<f64>(),
+                                                            ) {
+                                                                points.push((x, y));
+                                                                part_idx += 4; // Move past ( x y )
+                                                            } else {
+                                                                break;
+                                                            }
+                                                        } else if poly_parts[part_idx] == ";" {
+                                                            break;
+                                                        } else {
+                                                            part_idx += 1;
+                                                        }
+                                                    }
+
+                                                    if !points.is_empty() {
+                                                        // Find or create layer
+                                                        let layer_index = layers.iter().position(
+                                                            |l: &DefViaLayer| {
+                                                                l.layer_name == layer_name
+                                                            },
+                                                        );
+
+                                                        if let Some(idx) = layer_index {
+                                                            layers[idx].polygons.push(DefPolygon {
+                                                                points: points.clone(),
+                                                            });
+                                                            if mask_num.is_some() {
+                                                                layers[idx].mask = mask_num;
+                                                            }
+                                                        } else {
+                                                            let mut new_layer = DefViaLayer {
+                                                                layer_name: layer_name.clone(),
+                                                                mask: mask_num,
+                                                                rects: Vec::new(),
+                                                                polygons: Vec::new(),
+                                                            };
+                                                            new_layer.polygons.push(DefPolygon {
+                                                                points: points.clone(),
+                                                            });
+                                                            layers.push(new_layer);
+                                                        }
+
+                                                        println!("🔧       Added POLYGON on layer {} with {} points{}: {:?}", 
+                                                               layer_name, points.len(),
+                                                               if let Some(mask) = mask_num { format!(" MASK {}", mask) } else { String::new() },
+                                                               points);
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                i += 1;
+                            }
+
+                            vias.push(DefVia {
+                                name: via_name,
+                                layers,
+                            });
+                            continue; // Don't increment i again
+                        }
+                        i += 1;
+                    }
+                }
+            }
             _ => {}
         }
         i += 1;
@@ -540,6 +759,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
             rows: Vec::new(),
             tracks_x: Vec::new(),
             tracks_y: Vec::new(),
+            vias,
         },
     ))
 }

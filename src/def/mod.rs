@@ -77,6 +77,25 @@ pub struct DefRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefPolygon {
+    pub points: Vec<(f64, f64)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefViaLayer {
+    pub layer_name: String,
+    pub mask: Option<i32>,
+    pub rects: Vec<DefRect>,
+    pub polygons: Vec<DefPolygon>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefVia {
+    pub name: String,
+    pub layers: Vec<DefViaLayer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Def {
     pub die_area_points: Vec<(f64, f64)>,
     pub g_cell_grid_x: Vec<DefGCellGrid>,
@@ -87,6 +106,7 @@ pub struct Def {
     pub rows: Vec<DefRow>,
     pub tracks_x: Vec<DefTrack>,
     pub tracks_y: Vec<DefTrack>,
+    pub vias: Vec<DefVia>,
 }
 
 pub mod parser;
