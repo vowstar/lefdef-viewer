@@ -544,8 +544,63 @@ impl LefDefViewer {
         }
     }
 
+    fn calculate_outline_bounds(&self) -> Option<(f32, f32, f32, f32)> {
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+        let mut found_any = false;
+
+        // Only consider visible OUTLINE layers from selected macros
+        if let Some(lef) = &self.lef_data {
+            for macro_def in &lef.macros {
+                if !self.selected_cells.is_empty() && !self.selected_cells.contains(&macro_def.name)
+                {
+                    continue;
+                }
+
+                // Only use macro size bounds (OUTLINE)
+                if self.visible_layers.contains("OUTLINE") {
+                    let macro_x = macro_def.origin_x as f32;
+                    let macro_y = macro_def.origin_y as f32;
+                    let left = macro_x;
+                    let bottom = macro_y;
+                    let right = left + macro_def.size_x as f32;
+                    let top = bottom + macro_def.size_y as f32;
+
+                    min_x = min_x.min(left);
+                    min_y = min_y.min(bottom);
+                    max_x = max_x.max(right);
+                    max_y = max_y.max(top);
+                    found_any = true;
+                }
+            }
+        }
+
+        // Also consider DEF die area if no LEF macros or OUTLINE not visible
+        if !found_any {
+            if let Some(def) = &self.def_data {
+                for point in &def.die_area_points {
+                    let x = point.0 as f32 * 0.001; // Scale from microns
+                    let y = point.1 as f32 * 0.001;
+                    min_x = min_x.min(x);
+                    min_y = min_y.min(y);
+                    max_x = max_x.max(x);
+                    max_y = max_y.max(y);
+                    found_any = true;
+                }
+            }
+        }
+
+        if found_any && max_x > min_x && max_y > min_y {
+            Some((min_x, min_y, max_x, max_y))
+        } else {
+            None
+        }
+    }
+
     fn fit_to_view(&mut self, available_size: egui::Vec2) {
-        if let Some((min_x, min_y, max_x, max_y)) = self.calculate_bounds() {
+        if let Some((min_x, min_y, max_x, max_y)) = self.calculate_outline_bounds() {
             let content_width = max_x - min_x;
             let content_height = max_y - min_y;
 
@@ -565,8 +620,9 @@ impl LefDefViewer {
                 let center_y = (min_y + max_y) * 0.5;
 
                 // Reset pan to center the content in the available space
-                self.pan_x = (available_size.x * 0.5) - (center_x * self.zoom);
-                self.pan_y = (available_size.y * 0.5) - (center_y * self.zoom);
+                // Corrected formula: pan = -world_center * zoom
+                self.pan_x = -center_x * self.zoom;
+                self.pan_y = -center_y * self.zoom;
             }
         }
     }
@@ -624,10 +680,9 @@ impl LefDefViewer {
 
                 if obs_count > 0 {
                     println!(
-                        "DEBUG: Found {} OBS shapes in {} macros: {:?}",
+                        "DEBUG: Found {} OBS shapes in {} macros",
                         obs_count,
-                        obs_macros.len(),
-                        obs_macros
+                        obs_macros.len()
                     );
                 } else {
                     println!("DEBUG: No OBS data found in any macro");
@@ -640,9 +695,8 @@ impl LefDefViewer {
                     .filter(|layer| layer.contains(".OBS"))
                     .collect();
                 println!(
-                    "DEBUG: Added {} OBS layers (default hidden): {:?}",
-                    obs_layers.len(),
-                    obs_layers
+                    "DEBUG: Added {} OBS layers (default hidden)",
+                    obs_layers.len()
                 );
 
                 self.lef_data = Some(lef);
@@ -769,6 +823,8 @@ impl LefDefViewer {
                 }
             });
 
+            ui.label("💡 Fit to View uses OUTLINE layers only");
+
             ui.separator();
 
             if let Some(lef) = &self.lef_data {
@@ -813,17 +869,22 @@ impl LefDefViewer {
     }
 
     fn render_visualization(&mut self, ui: &mut egui::Ui) {
-        let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::drag());
+        // First record the remaining available space
+        let available_size = ui.available_size();
 
+        // Then allocate this entire space at once
+        let (response, painter) = ui.allocate_painter(available_size, egui::Sense::drag());
+
+        // Use the previously recorded `available_size` for fit-to-view
         // Handle fit to view request
         if self.fit_to_view_requested {
-            self.fit_to_view(ui.available_size());
+            self.fit_to_view(available_size);
             self.fit_to_view_requested = false;
         }
 
         // Handle F key for fit to view
         if ui.input(|i| i.key_pressed(egui::Key::F)) {
-            self.fit_to_view(ui.available_size());
+            self.fit_to_view(available_size);
         }
 
         // Handle mouse interactions
@@ -1335,6 +1396,12 @@ impl LefDefViewer {
                 // Get all unique layers from the complete list, not just visible ones
                 let mut all_layers: Vec<String> = self.all_layers.iter().cloned().collect();
                 all_layers.sort();
+
+                // Ensure OUTLINE is always first
+                if let Some(outline_pos) = all_layers.iter().position(|layer| layer == "OUTLINE") {
+                    let outline = all_layers.remove(outline_pos);
+                    all_layers.insert(0, outline);
+                }
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for layer in &all_layers {
