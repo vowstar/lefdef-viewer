@@ -830,30 +830,32 @@ impl LefDefViewer {
             if let Some(lef) = &self.lef_data {
                 ui.heading("LEF Macros (Cells)");
                 ui.label("Select cells to display:");
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for macro_def in &lef.macros {
-                        let mut is_selected = self.selected_cells.contains(&macro_def.name);
-                        if ui.checkbox(&mut is_selected, &macro_def.name).clicked() {
-                            if is_selected {
-                                self.selected_cells.insert(macro_def.name.clone());
-                            } else {
-                                self.selected_cells.remove(&macro_def.name);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for macro_def in &lef.macros {
+                            let mut is_selected = self.selected_cells.contains(&macro_def.name);
+                            if ui.checkbox(&mut is_selected, &macro_def.name).clicked() {
+                                if is_selected {
+                                    self.selected_cells.insert(macro_def.name.clone());
+                                } else {
+                                    self.selected_cells.remove(&macro_def.name);
+                                }
                             }
-                        }
 
-                        ui.collapsing(format!("Details: {}", &macro_def.name), |ui| {
-                            ui.label(format!("Class: {}", macro_def.class));
-                            ui.label(format!(
-                                "Size: {:.3} x {:.3}",
-                                macro_def.size_x, macro_def.size_y
-                            ));
-                            ui.label(format!("Pins: {}", macro_def.pins.len()));
-                            if let Some(obs) = &macro_def.obstruction {
-                                ui.label(format!("Obstructions: {}", obs.rects.len()));
-                            }
-                        });
-                    }
-                });
+                            ui.collapsing(format!("Details: {}", &macro_def.name), |ui| {
+                                ui.label(format!("Class: {}", macro_def.class));
+                                ui.label(format!(
+                                    "Size: {:.3} x {:.3}",
+                                    macro_def.size_x, macro_def.size_y
+                                ));
+                                ui.label(format!("Pins: {}", macro_def.pins.len()));
+                                if let Some(obs) = &macro_def.obstruction {
+                                    ui.label(format!("Obstructions: {}", obs.rects.len()));
+                                }
+                            });
+                        }
+                    });
 
                 ui.separator();
                 if ui.button("Select All Cells").clicked() {
@@ -1409,29 +1411,33 @@ impl LefDefViewer {
                     all_layers.insert(0, outline);
                 }
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for layer in &all_layers {
-                        let mut is_visible = self.visible_layers.contains(layer);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for layer in &all_layers {
+                            let mut is_visible = self.visible_layers.contains(layer);
 
-                        // Color indicator using our layer color system
-                        let color = self.get_layer_color(layer);
+                            // Color indicator using our layer color system
+                            let color = self.get_layer_color(layer);
 
-                        ui.horizontal(|ui| {
-                            // Color square
-                            let (rect, _) = ui
-                                .allocate_exact_size(egui::Vec2::splat(12.0), egui::Sense::hover());
-                            ui.painter().rect_filled(rect, 2.0, color);
+                            ui.horizontal(|ui| {
+                                // Color square
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::Vec2::splat(12.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect_filled(rect, 2.0, color);
 
-                            if ui.checkbox(&mut is_visible, layer).clicked() {
-                                if is_visible {
-                                    self.visible_layers.insert(layer.clone());
-                                } else {
-                                    self.visible_layers.remove(layer);
+                                if ui.checkbox(&mut is_visible, layer).clicked() {
+                                    if is_visible {
+                                        self.visible_layers.insert(layer.clone());
+                                    } else {
+                                        self.visible_layers.remove(layer);
+                                    }
                                 }
-                            }
-                        });
-                    }
-                });
+                            });
+                        }
+                    });
 
                 ui.separator();
 
@@ -1508,32 +1514,34 @@ impl eframe::App for LefDefViewer {
                 .default_size([400.0, 300.0])
                 .show(ctx, |ui| {
                     if let Some(lef) = &self.lef_data {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.label(format!("Total Macros: {}", lef.macros.len()));
-                            ui.separator();
-                            for macro_def in &lef.macros {
-                                ui.collapsing(&macro_def.name, |ui| {
-                                    ui.monospace(format!("Class: {}", macro_def.class));
-                                    ui.monospace(format!("Source: {}", macro_def.source));
-                                    ui.monospace(format!("Site: {}", macro_def.site_name));
-                                    ui.monospace(format!(
-                                        "Origin: ({:.3}, {:.3})",
-                                        macro_def.origin_x, macro_def.origin_y
-                                    ));
-                                    ui.monospace(format!(
-                                        "Size: {:.3} x {:.3}",
-                                        macro_def.size_x, macro_def.size_y
-                                    ));
-                                    ui.monospace(format!(
-                                        "Foreign: {} ({:.3}, {:.3})",
-                                        macro_def.foreign_name,
-                                        macro_def.foreign_x,
-                                        macro_def.foreign_y
-                                    ));
-                                    ui.monospace(format!("Pins: {}", macro_def.pins.len()));
-                                });
-                            }
-                        });
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.label(format!("Total Macros: {}", lef.macros.len()));
+                                ui.separator();
+                                for macro_def in &lef.macros {
+                                    ui.collapsing(&macro_def.name, |ui| {
+                                        ui.monospace(format!("Class: {}", macro_def.class));
+                                        ui.monospace(format!("Source: {}", macro_def.source));
+                                        ui.monospace(format!("Site: {}", macro_def.site_name));
+                                        ui.monospace(format!(
+                                            "Origin: ({:.3}, {:.3})",
+                                            macro_def.origin_x, macro_def.origin_y
+                                        ));
+                                        ui.monospace(format!(
+                                            "Size: {:.3} x {:.3}",
+                                            macro_def.size_x, macro_def.size_y
+                                        ));
+                                        ui.monospace(format!(
+                                            "Foreign: {} ({:.3}, {:.3})",
+                                            macro_def.foreign_name,
+                                            macro_def.foreign_x,
+                                            macro_def.foreign_y
+                                        ));
+                                        ui.monospace(format!("Pins: {}", macro_def.pins.len()));
+                                    });
+                                }
+                            });
                     } else {
                         ui.label("No LEF data loaded");
                     }
@@ -1546,24 +1554,26 @@ impl eframe::App for LefDefViewer {
                 .default_size([400.0, 300.0])
                 .show(ctx, |ui| {
                     if let Some(def) = &self.def_data {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.label(format!("Die Area Points: {}", def.die_area_points.len()));
-                            ui.label(format!("Components: {}", def.components.len()));
-                            ui.label(format!("Pins: {}", def.pins.len()));
-                            ui.label(format!("Nets: {}", def.nets.len()));
-                            ui.separator();
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.label(format!("Die Area Points: {}", def.die_area_points.len()));
+                                ui.label(format!("Components: {}", def.components.len()));
+                                ui.label(format!("Pins: {}", def.pins.len()));
+                                ui.label(format!("Nets: {}", def.nets.len()));
+                                ui.separator();
 
-                            if !def.die_area_points.is_empty() {
-                                ui.collapsing("Die Area", |ui| {
-                                    for (i, point) in def.die_area_points.iter().enumerate() {
-                                        ui.monospace(format!(
-                                            "Point {}: ({:.3}, {:.3})",
-                                            i, point.0, point.1
-                                        ));
-                                    }
-                                });
-                            }
-                        });
+                                if !def.die_area_points.is_empty() {
+                                    ui.collapsing("Die Area", |ui| {
+                                        for (i, point) in def.die_area_points.iter().enumerate() {
+                                            ui.monospace(format!(
+                                                "Point {}: ({:.3}, {:.3})",
+                                                i, point.0, point.1
+                                            ));
+                                        }
+                                    });
+                                }
+                            });
                     } else {
                         ui.label("No DEF data loaded");
                     }
