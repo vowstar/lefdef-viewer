@@ -29,6 +29,14 @@ pub struct LefDefViewer {
     show_layers_panel: bool,
     show_pin_text: bool,
     fit_to_view_requested: bool,
+    // DEF related selection states
+    selected_components: std::collections::HashSet<String>,
+    selected_pins: std::collections::HashSet<String>,
+    selected_nets: std::collections::HashSet<String>,
+    show_components: bool,
+    show_pins: bool,
+    show_nets: bool,
+    show_diearea: bool,
 }
 
 impl LefDefViewer {
@@ -39,6 +47,10 @@ impl LefDefViewer {
             show_pin_text: true,
             fit_to_view_requested: false,
             success_message: None,
+            show_components: true,
+            show_pins: true,
+            show_nets: true,
+            show_diearea: true,
             ..Default::default()
         }
     }
@@ -961,6 +973,257 @@ impl LefDefViewer {
                     self.selected_cells.clear();
                 }
             }
+
+            // DEF Structure Section
+            if let Some(def) = &self.def_data {
+                ui.separator();
+                ui.heading("📊 DEF Structure");
+
+                // DESIGN information
+                ui.label("📐 DESIGN");
+                ui.indent("design_info", |ui| {
+                    ui.label("Design loaded successfully");
+                });
+
+                ui.separator();
+
+                // DIEAREA section
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.show_diearea, "");
+                    if def.die_area_points.len() == 2 {
+                        ui.label(format!(
+                            "🔲 DIEAREA (Rectangle: {} points)",
+                            def.die_area_points.len()
+                        ));
+                    } else {
+                        ui.label(format!(
+                            "🔲 DIEAREA (Polygon: {} points)",
+                            def.die_area_points.len()
+                        ));
+                    }
+                });
+
+                // Show DIEAREA details
+                if !def.die_area_points.is_empty() {
+                    ui.indent("diearea_details", |ui| {
+                        if def.die_area_points.len() == 2 {
+                            let p1 = &def.die_area_points[0];
+                            let p2 = &def.die_area_points[1];
+                            let width = (p2.0 - p1.0).abs();
+                            let height = (p2.1 - p1.1).abs();
+                            ui.label(format!(
+                                "  📐 Size: {:.1} × {:.1} μm",
+                                width / 1000.0,
+                                height / 1000.0
+                            ));
+                            ui.label(format!(
+                                "  📍 Bottom-left: ({:.1}, {:.1})",
+                                p1.0 / 1000.0,
+                                p1.1 / 1000.0
+                            ));
+                            ui.label(format!(
+                                "  📍 Top-right: ({:.1}, {:.1})",
+                                p2.0 / 1000.0,
+                                p2.1 / 1000.0
+                            ));
+                        } else {
+                            ui.label("  📐 Custom polygon shape");
+                            ui.label(format!("  📍 {} vertices", def.die_area_points.len()));
+
+                            // Calculate bounding box
+                            let min_x = def
+                                .die_area_points
+                                .iter()
+                                .map(|p| p.0)
+                                .fold(f64::INFINITY, f64::min);
+                            let max_x = def
+                                .die_area_points
+                                .iter()
+                                .map(|p| p.0)
+                                .fold(f64::NEG_INFINITY, f64::max);
+                            let min_y = def
+                                .die_area_points
+                                .iter()
+                                .map(|p| p.1)
+                                .fold(f64::INFINITY, f64::min);
+                            let max_y = def
+                                .die_area_points
+                                .iter()
+                                .map(|p| p.1)
+                                .fold(f64::NEG_INFINITY, f64::max);
+
+                            ui.label(format!(
+                                "  📦 Bounds: ({:.1}, {:.1}) to ({:.1}, {:.1})",
+                                min_x / 1000.0,
+                                min_y / 1000.0,
+                                max_x / 1000.0,
+                                max_y / 1000.0
+                            ));
+                        }
+                    });
+                }
+
+                ui.separator();
+
+                // COMPONENTS section
+                egui::CollapsingHeader::new(format!("📦 COMPONENTS ({})", def.components.len()))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.show_components, "Show Components");
+                            ui.label(format!("Total: {}", def.components.len()));
+                        });
+
+                        if !def.components.is_empty() {
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                if ui.button("Select All").clicked() {
+                                    for component in &def.components {
+                                        self.selected_components.insert(component.id.clone());
+                                    }
+                                }
+                                if ui.button("Clear Selection").clicked() {
+                                    self.selected_components.clear();
+                                }
+                            });
+
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, true])
+                                .max_height(200.0)
+                                .show(ui, |ui| {
+                                    for component in &def.components {
+                                        let mut is_selected =
+                                            self.selected_components.contains(&component.id);
+                                        let response = ui.checkbox(&mut is_selected, &component.id);
+                                        if response.clicked() {
+                                            if is_selected {
+                                                self.selected_components
+                                                    .insert(component.id.clone());
+                                            } else {
+                                                self.selected_components.remove(&component.id);
+                                            }
+                                        }
+
+                                        // Show component details on hover
+                                        if response.hovered() {
+                                            response.on_hover_text(format!(
+                                                "  {} at ({:.1}, {:.1}) {}",
+                                                component.name,
+                                                component.x,
+                                                component.y,
+                                                component.orient
+                                            ));
+                                        }
+                                    }
+                                });
+                        }
+                    });
+
+                ui.separator();
+
+                // PINS section
+                egui::CollapsingHeader::new(format!("📌 PINS ({})", def.pins.len()))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.show_pins, "Show Pins");
+                            ui.label(format!("Total: {}", def.pins.len()));
+                        });
+
+                        if !def.pins.is_empty() {
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                if ui.button("Select All").clicked() {
+                                    for pin in &def.pins {
+                                        self.selected_pins.insert(pin.name.clone());
+                                    }
+                                }
+                                if ui.button("Clear Selection").clicked() {
+                                    self.selected_pins.clear();
+                                }
+                            });
+
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, true])
+                                .max_height(200.0)
+                                .show(ui, |ui| {
+                                    for pin in &def.pins {
+                                        let mut is_selected =
+                                            self.selected_pins.contains(&pin.name);
+                                        let response = ui.checkbox(&mut is_selected, &pin.name);
+                                        if response.clicked() {
+                                            if is_selected {
+                                                self.selected_pins.insert(pin.name.clone());
+                                            } else {
+                                                self.selected_pins.remove(&pin.name);
+                                            }
+                                        }
+
+                                        // Show pin details on hover
+                                        if response.hovered() {
+                                            response.on_hover_text(format!(
+                                                "  {} {} {} at ({:.1}, {:.1})",
+                                                pin.direction, pin.use_type, pin.net, pin.x, pin.y
+                                            ));
+                                        }
+                                    }
+                                });
+                        }
+                    });
+
+                ui.separator();
+
+                // NETS section
+                egui::CollapsingHeader::new(format!("🔗 NETS ({})", def.nets.len()))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.show_nets, "Show Nets");
+                            ui.label(format!("Total: {}", def.nets.len()));
+                        });
+
+                        if !def.nets.is_empty() {
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                if ui.button("Select All").clicked() {
+                                    for net in &def.nets {
+                                        self.selected_nets.insert(net.name.clone());
+                                    }
+                                }
+                                if ui.button("Clear Selection").clicked() {
+                                    self.selected_nets.clear();
+                                }
+                            });
+
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, true])
+                                .max_height(200.0)
+                                .show(ui, |ui| {
+                                    for net in &def.nets {
+                                        let mut is_selected =
+                                            self.selected_nets.contains(&net.name);
+                                        let response = ui.checkbox(&mut is_selected, &net.name);
+                                        if response.clicked() {
+                                            if is_selected {
+                                                self.selected_nets.insert(net.name.clone());
+                                            } else {
+                                                self.selected_nets.remove(&net.name);
+                                            }
+                                        }
+
+                                        // Show net details on hover
+                                        if response.hovered() {
+                                            response.on_hover_text(format!(
+                                                "  {} instances, {} pins",
+                                                net.instances.len(),
+                                                net.pins.len()
+                                            ));
+                                        }
+                                    }
+                                });
+                        }
+                    });
+            }
         });
     }
 
@@ -1411,75 +1674,164 @@ impl LefDefViewer {
         }
 
         if let Some(def) = &self.def_data {
-            // Draw die area outline
-            for (i, point) in def.die_area_points.iter().enumerate() {
-                if i > 0 {
-                    let prev_point = &def.die_area_points[i - 1];
-                    let start = egui::pos2(
-                        center.x + self.pan_x + (prev_point.0 as f32 * self.zoom * 0.001), // Scale down from microns
-                        center.y + self.pan_y + (prev_point.1 as f32 * self.zoom * 0.001),
+            // Draw die area outline (if enabled)
+            if self.show_diearea && !def.die_area_points.is_empty() {
+                if def.die_area_points.len() == 2 {
+                    // Handle 2-point rectangle: (x1,y1) (x2,y2) defines a rectangle
+                    let p1 = &def.die_area_points[0];
+                    let p2 = &def.die_area_points[1];
+
+                    // Convert to screen coordinates (keep Y axis consistent with multi-point)
+                    let screen_p1 = egui::pos2(
+                        center.x + self.pan_x + (p1.0 as f32 * self.zoom * 0.001),
+                        center.y + self.pan_y + (p1.1 as f32 * self.zoom * 0.001), // Same as components
                     );
-                    let end = egui::pos2(
-                        center.x + self.pan_x + (point.0 as f32 * self.zoom * 0.001),
-                        center.y + self.pan_y + (point.1 as f32 * self.zoom * 0.001),
+                    let screen_p2 = egui::pos2(
+                        center.x + self.pan_x + (p2.0 as f32 * self.zoom * 0.001),
+                        center.y + self.pan_y + (p2.1 as f32 * self.zoom * 0.001), // Same as components
                     );
-                    painter.line_segment([start, end], egui::Stroke::new(3.0, egui::Color32::RED));
+
+                    // Create rectangle from min/max of both points
+                    let rect = egui::Rect::from_two_pos(screen_p1, screen_p2);
+
+                    // Draw rectangle outline
+                    painter.rect_stroke(rect, 0.0, egui::Stroke::new(3.0, egui::Color32::RED));
+
+                    // Draw corner markers
+                    painter.circle_filled(screen_p1, 3.0, egui::Color32::RED);
+                    painter.circle_filled(screen_p2, 3.0, egui::Color32::RED);
+                } else {
+                    // Handle multi-point polygon: connect all points and close the polygon
+                    let mut screen_points: Vec<egui::Pos2> = Vec::new();
+
+                    // Convert all points to screen coordinates (same as components)
+                    for point in &def.die_area_points {
+                        let screen_point = egui::pos2(
+                            center.x + self.pan_x + (point.0 as f32 * self.zoom * 0.001),
+                            center.y + self.pan_y + (point.1 as f32 * self.zoom * 0.001), // Same as components
+                        );
+                        screen_points.push(screen_point);
+                    }
+
+                    // First draw a subtle fill
+                    if screen_points.len() >= 3 {
+                        painter.add(egui::epaint::Shape::convex_polygon(
+                            screen_points.clone(),
+                            egui::Color32::from_rgba_unmultiplied(255, 0, 0, 15), // Very light red fill
+                            egui::Stroke::NONE,
+                        ));
+                    }
+
+                    // Then draw thick outline lines between consecutive points
+                    for i in 0..screen_points.len() {
+                        let current = screen_points[i];
+                        let next = screen_points[(i + 1) % screen_points.len()];
+
+                        // Draw thick red outline
+                        painter.line_segment(
+                            [current, next],
+                            egui::Stroke::new(4.0, egui::Color32::from_rgb(255, 0, 0)), // Thick red line
+                        );
+                    }
                 }
             }
 
-            if !def.die_area_points.is_empty() && def.die_area_points.len() > 2 {
-                let first = &def.die_area_points[0];
-                let last = &def.die_area_points[def.die_area_points.len() - 1];
-                let start = egui::pos2(
-                    center.x + self.pan_x + (last.0 as f32 * self.zoom * 0.001),
-                    center.y + self.pan_y + (last.1 as f32 * self.zoom * 0.001),
-                );
-                let end = egui::pos2(
-                    center.x + self.pan_x + (first.0 as f32 * self.zoom * 0.001),
-                    center.y + self.pan_y + (first.1 as f32 * self.zoom * 0.001),
-                );
-                painter.line_segment([start, end], egui::Stroke::new(3.0, egui::Color32::RED));
-            }
+            // Draw components (if enabled and selected)
+            if self.show_components {
+                for component in &def.components {
+                    // Only draw if this component is selected (or all if none are selected)
+                    if !self.selected_components.is_empty()
+                        && !self.selected_components.contains(&component.id)
+                    {
+                        continue;
+                    }
 
-            // Draw components
-            for component in &def.components {
-                let comp_x = center.x + self.pan_x + (component.x as f32 * self.zoom * 0.001);
-                let comp_y = center.y + self.pan_y + (component.y as f32 * self.zoom * 0.001);
+                    let comp_x = center.x + self.pan_x + (component.x as f32 * self.zoom * 0.001);
+                    let comp_y = center.y + self.pan_y + (component.y as f32 * self.zoom * 0.001);
 
-                // Draw a small rectangle for each component
-                let comp_size = 5.0 * self.zoom;
-                let comp_rect = egui::Rect::from_center_size(
-                    egui::pos2(comp_x, comp_y),
-                    egui::vec2(comp_size.max(2.0), comp_size.max(2.0)),
-                );
+                    // Draw a small rectangle for each component
+                    let comp_size = 5.0 * self.zoom;
+                    let comp_rect = egui::Rect::from_center_size(
+                        egui::pos2(comp_x, comp_y),
+                        egui::vec2(comp_size.max(2.0), comp_size.max(2.0)),
+                    );
 
-                painter.rect_filled(comp_rect, 0.0, egui::Color32::from_rgb(0, 200, 100));
-                painter.rect_stroke(comp_rect, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+                    // Use different colors based on selection
+                    let is_selected = self.selected_components.contains(&component.id);
+                    let fill_color = if is_selected {
+                        egui::Color32::from_rgb(0, 255, 150) // Brighter green for selected
+                    } else {
+                        egui::Color32::from_rgb(0, 200, 100) // Normal green
+                    };
 
-                // Draw component name if zoom is high enough
-                // Store component text for later rendering
-                if self.zoom > 2.0 {
-                    texts_to_render.push((
-                        egui::pos2(comp_x, comp_y - comp_size - 10.0),
-                        component.id.clone(),
-                        egui::FontId::monospace(8.0),
-                        egui::Color32::YELLOW,
-                    ));
+                    painter.rect_filled(comp_rect, 0.0, fill_color);
+                    painter.rect_stroke(
+                        comp_rect,
+                        0.0,
+                        egui::Stroke::new(1.0, egui::Color32::WHITE),
+                    );
+
+                    // Draw component name if zoom is high enough
+                    // Store component text for later rendering
+                    if self.zoom > 2.0 {
+                        texts_to_render.push((
+                            egui::pos2(comp_x, comp_y - comp_size - 10.0),
+                            component.id.clone(),
+                            egui::FontId::monospace(8.0),
+                            egui::Color32::YELLOW,
+                        ));
+                    }
                 }
             }
 
-            // Draw pins
-            for pin in &def.pins {
-                let pin_x = center.x + self.pan_x + (pin.x as f32 * self.zoom * 0.001);
-                let pin_y = center.y + self.pan_y + (pin.y as f32 * self.zoom * 0.001);
+            // Draw pins (if enabled and selected)
+            if self.show_pins {
+                for pin in &def.pins {
+                    // Only draw if this pin is selected (or all if none are selected)
+                    if !self.selected_pins.is_empty() && !self.selected_pins.contains(&pin.name) {
+                        continue;
+                    }
 
-                // Draw a small circle for each pin
-                let pin_radius = 3.0 * self.zoom;
-                painter.circle_filled(
-                    egui::pos2(pin_x, pin_y),
-                    pin_radius.max(1.0),
-                    egui::Color32::LIGHT_BLUE,
-                );
+                    let pin_x = center.x + self.pan_x + (pin.x as f32 * self.zoom * 0.001);
+                    let pin_y = center.y + self.pan_y + (pin.y as f32 * self.zoom * 0.001);
+
+                    // Draw a small circle for each pin
+                    let pin_radius = 3.0 * self.zoom;
+
+                    // Use different colors based on selection and pin type
+                    let is_selected = self.selected_pins.contains(&pin.name);
+                    let fill_color = if is_selected {
+                        egui::Color32::from_rgb(150, 150, 255) // Brighter blue for selected
+                    } else {
+                        match pin.direction.as_str() {
+                            "INPUT" => egui::Color32::from_rgb(100, 255, 100), // Green for input
+                            "OUTPUT" => egui::Color32::from_rgb(255, 100, 100), // Red for output
+                            "INOUT" => egui::Color32::from_rgb(255, 255, 100), // Yellow for bidirectional
+                            _ => egui::Color32::LIGHT_BLUE,                    // Default blue
+                        }
+                    };
+
+                    painter.circle_filled(
+                        egui::pos2(pin_x, pin_y),
+                        pin_radius.max(1.0),
+                        fill_color,
+                    );
+                    painter.circle_stroke(
+                        egui::pos2(pin_x, pin_y),
+                        pin_radius.max(1.0),
+                        egui::Stroke::new(1.0, egui::Color32::WHITE),
+                    );
+
+                    // Draw pin name if zoom is high enough
+                    if self.zoom > 3.0 {
+                        texts_to_render.push((
+                            egui::pos2(pin_x, pin_y - pin_radius - 8.0),
+                            pin.name.clone(),
+                            egui::FontId::monospace(7.0),
+                            egui::Color32::WHITE,
+                        ));
+                    }
+                }
             }
         }
 

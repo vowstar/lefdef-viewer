@@ -113,17 +113,43 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
         match parts[0] {
             "DIEAREA" => {
                 println!("🔧   Found DIEAREA");
-                // Parse DIEAREA ( x1 y1 ) ( x2 y2 ) ...
-                let mut j = 1;
-                while j < parts.len() {
-                    if parts[j] == "(" && j + 2 < parts.len() && parts[j + 3] == ")" {
-                        if let (Ok(x), Ok(y)) =
-                            (parts[j + 1].parse::<f64>(), parts[j + 2].parse::<f64>())
-                        {
+
+                // Collect all DIEAREA content across multiple lines until we find the semicolon
+                let mut diearea_content = String::new();
+                let mut line_idx = i;
+
+                // Add current line content (starting from DIEAREA)
+                diearea_content.push_str(line);
+
+                // Continue collecting until we find a semicolon
+                while !diearea_content.contains(';') && line_idx + 1 < lines.len() {
+                    line_idx += 1;
+                    diearea_content.push(' ');
+                    diearea_content.push_str(lines[line_idx].trim());
+                }
+
+                // Update the main loop index
+                i = line_idx;
+
+                // Parse all points from the collected content
+                let content_parts: Vec<&str> = diearea_content.split_whitespace().collect();
+                let mut j = 1; // Skip "DIEAREA"
+
+                while j < content_parts.len() {
+                    if content_parts[j] == "("
+                        && j + 3 < content_parts.len()
+                        && content_parts[j + 3] == ")"
+                    {
+                        if let (Ok(x), Ok(y)) = (
+                            content_parts[j + 1].parse::<f64>(),
+                            content_parts[j + 2].parse::<f64>(),
+                        ) {
                             die_area_points.push((x, y));
                             println!("🔧     Die area point: ({:.1}, {:.1})", x, y);
                         }
-                        j += 4;
+                        j += 4; // Move past ( x y )
+                    } else if content_parts[j] == ";" {
+                        break; // End of DIEAREA statement
                     } else {
                         j += 1;
                     }
