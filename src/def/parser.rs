@@ -172,7 +172,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
 
                         let comp_parts: Vec<&str> = comp_line.split_whitespace().collect();
                         if comp_parts.len() >= 2 && comp_parts[0] == "-" {
-                            // Component line: - componentName macroName + PLACED ( x y ) orientation ;
+                            // Component line: - componentName macroName [+ attributes...]
                             let comp_id = comp_parts[1].to_string();
                             let comp_name = if comp_parts.len() > 2 {
                                 comp_parts[2].to_string()
@@ -183,10 +183,11 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                             let mut x = 0.0;
                             let mut y = 0.0;
                             let mut orient = String::new();
+                            let mut status = "PLACED".to_string();
 
-                            // Look for PLACED ( x y ) orientation
+                            // Look for PLACED/FIXED in current line first
                             for j in 3..comp_parts.len() {
-                                if comp_parts[j] == "PLACED"
+                                if (comp_parts[j] == "PLACED" || comp_parts[j] == "FIXED")
                                     && j + 4 < comp_parts.len()
                                     && comp_parts[j + 1] == "("
                                     && comp_parts[j + 4] == ")"
@@ -197,6 +198,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                                     ) {
                                         x = px;
                                         y = py;
+                                        status = comp_parts[j].to_string();
                                         if j + 5 < comp_parts.len() {
                                             orient =
                                                 comp_parts[j + 5].trim_end_matches(';').to_string();
@@ -206,17 +208,70 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                                 }
                             }
 
+                            // If not found in current line, look in next few lines
+                            if x == 0.0 && y == 0.0 {
+                                let mut comp_i = i + 1;
+                                while comp_i < lines.len() && comp_i < i + 20 {
+                                    // Limit search to 20 lines
+                                    let continuation_line = lines[comp_i].trim();
+
+                                    // Stop if we hit next component or END
+                                    if (continuation_line.starts_with('-')
+                                        && continuation_line.len() > 1)
+                                        || continuation_line.starts_with("END COMPONENTS")
+                                    {
+                                        break;
+                                    }
+
+                                    // Look for PLACED/FIXED coordinates
+                                    let cont_parts: Vec<&str> =
+                                        continuation_line.split_whitespace().collect();
+                                    for k in 0..cont_parts.len() {
+                                        if (cont_parts[k] == "PLACED" || cont_parts[k] == "FIXED")
+                                            && k + 4 < cont_parts.len()
+                                            && cont_parts[k + 1] == "("
+                                            && cont_parts[k + 4] == ")"
+                                        {
+                                            if let (Ok(px), Ok(py)) = (
+                                                cont_parts[k + 2].parse::<f64>(),
+                                                cont_parts[k + 3].parse::<f64>(),
+                                            ) {
+                                                x = px;
+                                                y = py;
+                                                status = cont_parts[k].to_string();
+                                                if k + 5 < cont_parts.len() {
+                                                    orient = cont_parts[k + 5]
+                                                        .trim_end_matches(';')
+                                                        .to_string();
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    // If found, break
+                                    if x != 0.0 || y != 0.0 {
+                                        break;
+                                    }
+
+                                    comp_i += 1;
+                                }
+                            }
+
+                            println!(
+                                "🔧     Component: {} at ({:.1}, {:.1}) status={}",
+                                comp_id, x, y, status
+                            );
+
                             components.push(crate::def::DefComponent {
                                 id: comp_id.clone(),
                                 name: comp_name,
-                                status: "PLACED".to_string(),
+                                status,
                                 source: "USER".to_string(),
                                 orient,
                                 x,
                                 y,
                             });
-
-                            println!("🔧     Component: {} at ({:.1}, {:.1})", comp_id, x, y);
                         }
                         i += 1;
                     }
