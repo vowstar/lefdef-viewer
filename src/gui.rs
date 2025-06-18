@@ -22,6 +22,7 @@ pub struct LefDefViewer {
     pan_x: f32,
     pan_y: f32,
     error_message: Option<String>,
+    success_message: Option<String>,
     selected_cells: std::collections::HashSet<String>,
     visible_layers: std::collections::HashSet<String>,
     all_layers: std::collections::HashSet<String>,
@@ -37,6 +38,7 @@ impl LefDefViewer {
             show_layers_panel: true,
             show_pin_text: true,
             fit_to_view_requested: false,
+            success_message: None,
             ..Default::default()
         }
     }
@@ -779,7 +781,7 @@ impl LefDefViewer {
             {
                 match export::export_lef_to_csv(lef_data, &file_path.to_string_lossy()) {
                     Ok(()) => {
-                        self.error_message = Some(format!(
+                        self.success_message = Some(format!(
                             "Successfully exported {} macros to CSV file: {}",
                             lef_data.macros.len(),
                             file_path.display()
@@ -1591,10 +1593,30 @@ impl eframe::App for LefDefViewer {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label(error);
-                    if ui.button("OK").clicked() {
-                        self.error_message = None;
-                    }
+                    ui.colored_label(egui::Color32::from_rgb(244, 67, 54), error);
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.allocate_space(egui::Vec2::new(ui.available_width() / 2.0 - 25.0, 0.0));
+                        if ui.button("OK").clicked() {
+                            self.error_message = None;
+                        }
+                    });
+                });
+        }
+
+        if let Some(success) = &self.success_message.clone() {
+            egui::Window::new("Success")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.colored_label(egui::Color32::from_rgb(76, 175, 80), success);
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.allocate_space(egui::Vec2::new(ui.available_width() / 2.0 - 25.0, 0.0));
+                        if ui.button("OK").clicked() {
+                            self.success_message = None;
+                        }
+                    });
                 });
         }
 
