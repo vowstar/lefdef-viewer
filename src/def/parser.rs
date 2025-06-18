@@ -237,23 +237,125 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                         let pin_parts: Vec<&str> = pin_line.split_whitespace().collect();
                         if pin_parts.len() >= 2 && pin_parts[0] == "-" {
                             let pin_name = pin_parts[1].to_string();
+                            let mut net = "".to_string();
+                            let mut direction = "".to_string();
+                            let mut use_type = "".to_string();
+                            let mut x = 0.0;
+                            let mut y = 0.0;
+                            let mut orient = "".to_string();
+
+                            // Parse the initial pin definition line
+                            // Format: - pinName + NET netName + DIRECTION direction + USE useType
+                            for j in 2..pin_parts.len() {
+                                if pin_parts[j] == "NET" && j + 1 < pin_parts.len() {
+                                    net = pin_parts[j + 1].to_string();
+                                } else if pin_parts[j] == "DIRECTION" && j + 1 < pin_parts.len() {
+                                    direction = pin_parts[j + 1].to_string();
+                                } else if pin_parts[j] == "USE" && j + 1 < pin_parts.len() {
+                                    use_type = pin_parts[j + 1].to_string();
+                                }
+                            }
+
+                            // Parse continuation lines for PLACED coordinates
+                            let mut pin_i = i + 1;
+                            while pin_i < lines.len() {
+                                let continuation_line = lines[pin_i].trim();
+
+                                // Check if we reached the end of this pin (semicolon or next pin)
+                                if continuation_line.contains(';')
+                                    || (continuation_line.starts_with('-')
+                                        && continuation_line.len() > 1)
+                                    || continuation_line.starts_with("END PINS")
+                                {
+                                    // Parse PLACED coordinates from this line if it contains them
+                                    let cont_parts: Vec<&str> =
+                                        continuation_line.split_whitespace().collect();
+                                    for k in 0..cont_parts.len() {
+                                        if cont_parts[k] == "PLACED"
+                                            && k + 4 < cont_parts.len()
+                                            && cont_parts[k + 1] == "("
+                                            && cont_parts[k + 4] == ")"
+                                        {
+                                            if let (Ok(px), Ok(py)) = (
+                                                cont_parts[k + 2].parse::<f64>(),
+                                                cont_parts[k + 3].parse::<f64>(),
+                                            ) {
+                                                x = px;
+                                                y = py;
+                                                if k + 5 < cont_parts.len() {
+                                                    orient = cont_parts[k + 5]
+                                                        .trim_end_matches(';')
+                                                        .to_string();
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    // If this line ends with semicolon, we're done with this pin
+                                    if continuation_line.contains(';') {
+                                        break;
+                                    }
+
+                                    // If we hit next pin or END, backtrack
+                                    if continuation_line.starts_with('-')
+                                        || continuation_line.starts_with("END PINS")
+                                    {
+                                        pin_i -= 1; // Backtrack so main loop processes this line
+                                        break;
+                                    }
+                                } else {
+                                    // Check for PLACED in continuation lines
+                                    let cont_parts: Vec<&str> =
+                                        continuation_line.split_whitespace().collect();
+                                    for k in 0..cont_parts.len() {
+                                        if cont_parts[k] == "PLACED"
+                                            && k + 4 < cont_parts.len()
+                                            && cont_parts[k + 1] == "("
+                                            && cont_parts[k + 4] == ")"
+                                        {
+                                            if let (Ok(px), Ok(py)) = (
+                                                cont_parts[k + 2].parse::<f64>(),
+                                                cont_parts[k + 3].parse::<f64>(),
+                                            ) {
+                                                x = px;
+                                                y = py;
+                                                if k + 5 < cont_parts.len() {
+                                                    orient = cont_parts[k + 5]
+                                                        .trim_end_matches(';')
+                                                        .to_string();
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                pin_i += 1;
+                            }
+
+                            // Update main loop index
+                            i = pin_i;
+
+                            println!(
+                                "🔧     Pin: {} at ({:.1}, {:.1}) dir={} use={}",
+                                pin_name, x, y, direction, use_type
+                            );
 
                             pins.push(crate::def::DefPin {
                                 name: pin_name.clone(),
-                                net: "".to_string(),
-                                use_type: "".to_string(),
-                                status: "".to_string(),
-                                direction: "".to_string(),
-                                orient: "".to_string(),
-                                x: 0.0,
-                                y: 0.0,
+                                net,
+                                use_type,
+                                status: "PLACED".to_string(),
+                                direction,
+                                orient,
+                                x,
+                                y,
                                 rects: Vec::new(),
                                 ports: Vec::new(),
                             });
-
-                            println!("🔧     Pin: {}", pin_name);
+                        } else {
+                            i += 1;
                         }
-                        i += 1;
                     }
                 }
             }
