@@ -40,6 +40,42 @@ impl LefDefViewer {
         }
     }
 
+    fn render_text_with_outline(
+        &self,
+        painter: &egui::Painter,
+        pos: egui::Pos2,
+        anchor: egui::Align2,
+        text: &str,
+        font: egui::FontId,
+        color: egui::Color32,
+    ) {
+        // Add black outline for white text
+        if color == egui::Color32::WHITE {
+            let outline_color = egui::Color32::BLACK;
+            let outline_offset = 1.0;
+
+            // Render outline in 8 directions
+            let offsets = [
+                (-outline_offset, -outline_offset), // Top-left
+                (0.0, -outline_offset),             // Top
+                (outline_offset, -outline_offset),  // Top-right
+                (-outline_offset, 0.0),             // Left
+                (outline_offset, 0.0),              // Right
+                (-outline_offset, outline_offset),  // Bottom-left
+                (0.0, outline_offset),              // Bottom
+                (outline_offset, outline_offset),   // Bottom-right
+            ];
+
+            for (dx, dy) in offsets {
+                let outline_pos = egui::pos2(pos.x + dx, pos.y + dy);
+                painter.text(outline_pos, anchor, text, font.clone(), outline_color);
+            }
+        }
+
+        // Render the main text on top
+        painter.text(pos, anchor, text, font, color);
+    }
+
     fn get_layer_color(&self, layer: &str) -> egui::Color32 {
         // Extract base layer name (before any '.' separator)
         let base_layer = layer.split('.').next().unwrap_or(layer);
@@ -1408,9 +1444,16 @@ impl LefDefViewer {
             }
         }
 
-        // Render all text on top of everything
+        // Render all text on top of everything with outline for white text
         for (pos, text, font, color) in texts_to_render {
-            painter.text(pos, egui::Align2::CENTER_CENTER, &text, font, color);
+            self.render_text_with_outline(
+                &painter,
+                pos,
+                egui::Align2::CENTER_CENTER,
+                &text,
+                font,
+                color,
+            );
         }
 
         ui.ctx().request_repaint();
