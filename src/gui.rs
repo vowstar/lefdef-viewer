@@ -900,15 +900,21 @@ impl LefDefViewer {
             if scroll_delta != 0.0 {
                 let zoom_factor = if scroll_delta > 0.0 { 1.1 } else { 0.9 };
                 let old_zoom = self.zoom;
+
+                // Get drawing area center
+                let rect = response.rect;
+                let center = rect.center();
+
+                // Convert mouse screen position to world coordinates before zoom
+                let world_x = (hover_pos.x - center.x - self.pan_x) / old_zoom;
+                let world_y = (hover_pos.y - center.y - self.pan_y) / old_zoom;
+
+                // Update zoom
                 self.zoom = (self.zoom * zoom_factor).clamp(0.01, 20.0);
 
-                // Zoom towards mouse position
-                let rect = response.rect;
-                let relative_pos = hover_pos - rect.min;
-                self.pan_x =
-                    relative_pos.x - (relative_pos.x - self.pan_x) * (self.zoom / old_zoom);
-                self.pan_y =
-                    relative_pos.y - (relative_pos.y - self.pan_y) * (self.zoom / old_zoom);
+                // Adjust pan so that the world point under mouse stays at the same screen position
+                self.pan_x = hover_pos.x - center.x - (world_x * self.zoom);
+                self.pan_y = hover_pos.y - center.y - (world_y * self.zoom);
             }
         }
 
