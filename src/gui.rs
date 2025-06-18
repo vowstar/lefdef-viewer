@@ -602,15 +602,48 @@ impl LefDefViewer {
                         for rect in &obs.rects {
                             let detailed_layer = format!("{}.OBS", rect.layer);
                             self.all_layers.insert(detailed_layer.clone());
-                            self.visible_layers.insert(detailed_layer);
+                            // OBS layers are added to all_layers but not visible_layers (default hidden)
                         }
                         for polygon in &obs.polygons {
                             let detailed_layer = format!("{}.OBS", polygon.layer);
                             self.all_layers.insert(detailed_layer.clone());
-                            self.visible_layers.insert(detailed_layer);
+                            // OBS layers are added to all_layers but not visible_layers (default hidden)
                         }
                     }
                 }
+
+                // Debug: Count obstructions and layers
+                let mut obs_count = 0;
+                let mut obs_macros = Vec::new();
+                for macro_def in &lef.macros {
+                    if let Some(obs) = &macro_def.obstruction {
+                        obs_count += obs.rects.len() + obs.polygons.len();
+                        obs_macros.push(&macro_def.name);
+                    }
+                }
+
+                if obs_count > 0 {
+                    println!(
+                        "DEBUG: Found {} OBS shapes in {} macros: {:?}",
+                        obs_count,
+                        obs_macros.len(),
+                        obs_macros
+                    );
+                } else {
+                    println!("DEBUG: No OBS data found in any macro");
+                }
+
+                // Count OBS layers
+                let obs_layers: Vec<&String> = self
+                    .all_layers
+                    .iter()
+                    .filter(|layer| layer.contains(".OBS"))
+                    .collect();
+                println!(
+                    "DEBUG: Added {} OBS layers (default hidden): {:?}",
+                    obs_layers.len(),
+                    obs_layers
+                );
 
                 self.lef_data = Some(lef);
                 self.lef_file_path = Some(path);
@@ -1011,7 +1044,9 @@ impl LefDefViewer {
                 if let Some(obs) = &macro_def.obstruction {
                     // Render obstruction rectangles
                     for rect_data in &obs.rects {
-                        if !self.visible_layers.contains(&rect_data.layer) {
+                        let detailed_layer = format!("{}.OBS", rect_data.layer);
+
+                        if !self.visible_layers.contains(&detailed_layer) {
                             continue;
                         }
 
@@ -1025,8 +1060,71 @@ impl LefDefViewer {
                                 y + (rect_data.yh as f32 * self.zoom),
                             ),
                         );
-                        let color = self.get_layer_color(&rect_data.layer);
-                        painter.rect_filled(obs_rect, 0.0, color);
+                        let color = self.get_layer_color(&detailed_layer);
+                        // Render OBS as dashed outline instead of filled rectangle
+                        let stroke = egui::Stroke::new(1.0, color);
+                        painter.rect_stroke(obs_rect, 0.0, stroke);
+
+                        // Add dashed pattern by drawing additional lines
+                        let dash_length = 3.0;
+                        let gap_length = 2.0;
+                        let pattern_length = dash_length + gap_length;
+
+                        // Top edge dashes
+                        let mut x = obs_rect.min.x;
+                        while x < obs_rect.max.x {
+                            let end_x = (x + dash_length).min(obs_rect.max.x);
+                            painter.line_segment(
+                                [
+                                    egui::pos2(x, obs_rect.min.y),
+                                    egui::pos2(end_x, obs_rect.min.y),
+                                ],
+                                stroke,
+                            );
+                            x += pattern_length;
+                        }
+
+                        // Bottom edge dashes
+                        let mut x = obs_rect.min.x;
+                        while x < obs_rect.max.x {
+                            let end_x = (x + dash_length).min(obs_rect.max.x);
+                            painter.line_segment(
+                                [
+                                    egui::pos2(x, obs_rect.max.y),
+                                    egui::pos2(end_x, obs_rect.max.y),
+                                ],
+                                stroke,
+                            );
+                            x += pattern_length;
+                        }
+
+                        // Left edge dashes
+                        let mut y = obs_rect.min.y;
+                        while y < obs_rect.max.y {
+                            let end_y = (y + dash_length).min(obs_rect.max.y);
+                            painter.line_segment(
+                                [
+                                    egui::pos2(obs_rect.min.x, y),
+                                    egui::pos2(obs_rect.min.x, end_y),
+                                ],
+                                stroke,
+                            );
+                            y += pattern_length;
+                        }
+
+                        // Right edge dashes
+                        let mut y = obs_rect.min.y;
+                        while y < obs_rect.max.y {
+                            let end_y = (y + dash_length).min(obs_rect.max.y);
+                            painter.line_segment(
+                                [
+                                    egui::pos2(obs_rect.max.x, y),
+                                    egui::pos2(obs_rect.max.x, end_y),
+                                ],
+                                stroke,
+                            );
+                            y += pattern_length;
+                        }
                     }
 
                     // Group obstruction polygons by layer to avoid z-fighting
@@ -1035,11 +1133,12 @@ impl LefDefViewer {
                         Vec<&crate::lef::LefPolygon>,
                     > = std::collections::HashMap::new();
                     for polygon_data in &obs.polygons {
-                        if !self.visible_layers.contains(&polygon_data.layer) {
+                        let detailed_layer = format!("{}.OBS", polygon_data.layer);
+                        if !self.visible_layers.contains(&detailed_layer) {
                             continue;
                         }
                         obs_layer_polygons
-                            .entry(polygon_data.layer.clone())
+                            .entry(detailed_layer.clone())
                             .or_default()
                             .push(polygon_data);
                     }
@@ -1082,16 +1181,52 @@ impl LefDefViewer {
                             y,
                         );
 
-                        // Render the final computed polygons
+                        // Render the final computed polygons as dashed outlines
                         for screen_points in final_polygons {
                             if screen_points.len() >= 3 {
-                                // --- draw filled polygon, irrespective of convexity ---
-                                painter.add(egui::Shape::Path(PathShape {
-                                    points: screen_points, // already deduped
-                                    closed: true,
-                                    fill: color,
-                                    stroke: PathStroke::NONE,
-                                }));
+                                // Draw dashed outline for OBS polygons
+                                let stroke = egui::Stroke::new(1.0, color);
+
+                                // Draw dashed lines between consecutive points
+                                for i in 0..screen_points.len() {
+                                    let start = screen_points[i];
+                                    let end = screen_points[(i + 1) % screen_points.len()];
+
+                                    // Calculate line direction and length
+                                    let dx = end.x - start.x;
+                                    let dy = end.y - start.y;
+                                    let line_length = (dx * dx + dy * dy).sqrt();
+
+                                    if line_length > 0.0 {
+                                        let dash_length = 3.0;
+                                        let gap_length = 2.0;
+                                        let pattern_length = dash_length + gap_length;
+
+                                        // Normalize direction
+                                        let dir_x = dx / line_length;
+                                        let dir_y = dy / line_length;
+
+                                        // Draw dashes along the line
+                                        let mut t = 0.0;
+                                        while t < line_length {
+                                            let dash_end = (t + dash_length).min(line_length);
+                                            let dash_start_pos = egui::pos2(
+                                                start.x + dir_x * t,
+                                                start.y + dir_y * t,
+                                            );
+                                            let dash_end_pos = egui::pos2(
+                                                start.x + dir_x * dash_end,
+                                                start.y + dir_y * dash_end,
+                                            );
+
+                                            painter.line_segment(
+                                                [dash_start_pos, dash_end_pos],
+                                                stroke,
+                                            );
+                                            t += pattern_length;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1241,6 +1376,13 @@ impl LefDefViewer {
                 ui.separator();
                 ui.label(format!("Total layers: {}", all_layers.len()));
                 ui.label(format!("Visible: {}", self.visible_layers.len()));
+
+                // Debug info
+                ui.separator();
+                ui.label("DEBUG - All layers:");
+                for layer in &all_layers {
+                    ui.monospace(layer);
+                }
             } else {
                 ui.label("No LEF file loaded");
             }

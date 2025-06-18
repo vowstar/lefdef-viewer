@@ -209,6 +209,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
     let mut foreign_x = 0.0;
     let mut foreign_y = 0.0;
     let mut pins = Vec::new();
+    let mut obstruction = None;
 
     let end_pattern = format!("END {}", name);
     let lines: Vec<&str> = remaining.lines().collect();
@@ -248,7 +249,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                         foreign_x,
                         foreign_y,
                         pins,
-                        obstruction: None,
+                        obstruction,
                     },
                 ));
             }
@@ -426,6 +427,104 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                     ports,
                 });
                 continue; // Don't increment i again since we already processed PIN content
+            }
+            "OBS" => {
+                // Parse OBS section
+                println!("🔧   Parsing OBS");
+                let mut rects = Vec::new();
+                let mut polygons = Vec::new();
+                let mut current_layer = String::new();
+
+                i += 1;
+                while i < lines.len() {
+                    let obs_line = lines[i].trim();
+                    if obs_line.starts_with("END") && obs_line != "END OBS" {
+                        break;
+                    }
+
+                    let obs_parts: Vec<&str> = obs_line.split_whitespace().collect();
+                    if !obs_parts.is_empty() {
+                        println!("🔧     Processing OBS line: {}", obs_line);
+                        match obs_parts[0] {
+                            "LAYER" if obs_parts.len() > 1 => {
+                                current_layer = obs_parts[1].to_string();
+                            }
+                            "RECT" if obs_parts.len() >= 5 => {
+                                if let (Ok(xl), Ok(yl), Ok(xh), Ok(yh)) = (
+                                    obs_parts[1].parse::<f64>(),
+                                    obs_parts[2].parse::<f64>(),
+                                    obs_parts[3].parse::<f64>(),
+                                    obs_parts[4].parse::<f64>(),
+                                ) {
+                                    rects.push(LefRect {
+                                        layer: current_layer.clone(),
+                                        xl,
+                                        yl,
+                                        xh,
+                                        yh,
+                                    });
+                                    println!("🔧     Added OBS rect on {}: ({:.1},{:.1}) -> ({:.1},{:.1})", 
+                                           current_layer, xl, yl, xh, yh);
+                                }
+                            }
+                            "POLYGON" => {
+                                // Parse polygon coordinates - all coordinates for this polygon are on this line
+                                let mut points = Vec::new();
+                                let mut coord_idx = 1;
+
+                                // Parse all coordinate pairs on this line
+                                while coord_idx + 1 < obs_parts.len() {
+                                    let x_str = obs_parts[coord_idx].trim_end_matches(';');
+                                    let y_str = obs_parts[coord_idx + 1].trim_end_matches(';');
+
+                                    if let (Ok(x), Ok(y)) =
+                                        (x_str.parse::<f64>(), y_str.parse::<f64>())
+                                    {
+                                        points.push((x, y));
+                                        coord_idx += 2;
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                if !points.is_empty() {
+                                    let is_hole = calculate_polygon_winding(&points);
+                                    polygons.push(LefPolygon {
+                                        layer: current_layer.clone(),
+                                        points,
+                                        is_hole,
+                                    });
+                                    println!(
+                                        "🔧     Added OBS polygon on {} with {} points ({}): {:?}",
+                                        current_layer,
+                                        polygons.last().unwrap().points.len(),
+                                        if is_hole { "hole" } else { "solid" },
+                                        polygons.last().unwrap().points
+                                    );
+                                }
+                            }
+                            "END" => {
+                                break; // End of OBS section
+                            }
+                            _ => {}
+                        }
+                    }
+                    i += 1;
+                }
+
+                // Store the obstruction data in the macro
+                obstruction = if !rects.is_empty() || !polygons.is_empty() {
+                    Some(LefObstruction { rects, polygons })
+                } else {
+                    None
+                };
+
+                println!(
+                    "🔧   OBS parsing complete: {} rects, {} polygons",
+                    obstruction.as_ref().map_or(0, |o| o.rects.len()),
+                    obstruction.as_ref().map_or(0, |o| o.polygons.len())
+                );
+                continue;
             }
             _ => {}
         }
