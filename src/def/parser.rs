@@ -417,8 +417,101 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
             "NETS" if parts.len() > 1 => {
                 if let Ok(num_nets) = parts[1].parse::<usize>() {
                     println!("🔧   Found NETS section with {} nets", num_nets);
-                    // Skip detailed net parsing for now
-                    while i < lines.len() && !lines[i].trim().starts_with("END NETS") {
+                    i += 1;
+
+                    // Parse nets until END NETS
+                    while i < lines.len() {
+                        let net_line = lines[i].trim();
+                        if net_line.starts_with("END NETS") {
+                            break;
+                        }
+
+                        let net_parts: Vec<&str> = net_line.split_whitespace().collect();
+                        if net_parts.len() >= 2 && net_parts[0] == "-" {
+                            // Net line: - netName ( compName pinName ) ...
+                            let net_name = net_parts[1].to_string();
+                            let mut instances = Vec::new();
+                            let mut pins = Vec::new();
+
+                            // Parse the initial net definition line
+                            let mut j = 2;
+                            while j < net_parts.len() {
+                                if net_parts[j] == "("
+                                    && j + 2 < net_parts.len()
+                                    && net_parts[j + 3] == ")"
+                                {
+                                    // Found (compName pinName) pattern
+                                    let comp_name = net_parts[j + 1].to_string();
+                                    let pin_name = net_parts[j + 2].to_string();
+                                    if comp_name == "PIN" {
+                                        pins.push(pin_name);
+                                    } else {
+                                        instances.push(format!("{}:{}", comp_name, pin_name));
+                                    }
+                                    j += 4; // Move past ( compName pinName )
+                                } else {
+                                    j += 1;
+                                }
+                            }
+
+                            // Parse continuation lines until semicolon or next net
+                            let mut net_i = i + 1;
+                            while net_i < lines.len() && net_i < i + 50 {
+                                // Limit search
+                                let continuation_line = lines[net_i].trim();
+
+                                // Stop if we hit next net or END
+                                if (continuation_line.starts_with('-')
+                                    && continuation_line.len() > 1)
+                                    || continuation_line.starts_with("END NETS")
+                                {
+                                    break;
+                                }
+
+                                // Parse ( compName pinName ) patterns in continuation lines
+                                let cont_parts: Vec<&str> =
+                                    continuation_line.split_whitespace().collect();
+                                let mut k = 0;
+                                while k < cont_parts.len() {
+                                    if cont_parts[k] == "("
+                                        && k + 2 < cont_parts.len()
+                                        && k + 3 < cont_parts.len()
+                                        && cont_parts[k + 3] == ")"
+                                    {
+                                        let comp_name = cont_parts[k + 1].to_string();
+                                        let pin_name = cont_parts[k + 2].to_string();
+                                        if comp_name == "PIN" {
+                                            pins.push(pin_name);
+                                        } else {
+                                            instances.push(format!("{}:{}", comp_name, pin_name));
+                                        }
+                                        k += 4;
+                                    } else {
+                                        k += 1;
+                                    }
+                                }
+
+                                // If this line contains semicolon, we're done
+                                if continuation_line.contains(';') {
+                                    break;
+                                }
+
+                                net_i += 1;
+                            }
+
+                            println!(
+                                "🔧     Net: {} with {} instances, {} pins",
+                                net_name,
+                                instances.len(),
+                                pins.len()
+                            );
+
+                            nets.push(crate::def::DefNet {
+                                name: net_name,
+                                instances,
+                                pins,
+                            });
+                        }
                         i += 1;
                     }
                 }
