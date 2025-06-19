@@ -10,6 +10,24 @@ use crate::def::{reader::DefReader, Def};
 use crate::export;
 use crate::lef::{reader::LefReader, Lef};
 
+/// Edge proximity detection result
+#[derive(Debug, Clone)]
+enum EdgeProximity {
+    Left(f32),   // Distance to left edge
+    Right(f32),  // Distance to right edge
+    Top(f32),    // Distance to top edge
+    Bottom(f32), // Distance to bottom edge
+    None,        // Not close to any edge
+}
+
+/// Smart text positioning configuration
+#[derive(Debug, Clone)]
+struct TextPositioning {
+    pos: egui::Pos2,
+    anchor: egui::Align2,
+    angle: f32, // Rotation angle in radians
+}
+
 #[derive(Default)]
 pub struct LefDefViewer {
     lef_data: Option<Lef>,
@@ -42,16 +60,36 @@ pub struct LefDefViewer {
 impl LefDefViewer {
     pub fn new() -> Self {
         Self {
+            lef_data: None,
+            def_data: None,
+            lef_file_path: None,
+            def_file_path: None,
+            show_lef_details: false,
+            show_def_details: false,
             zoom: 1.0,
-            show_layers_panel: true,
+            pan_x: 0.0,
+            pan_y: 0.0,
+            error_message: None,
+            success_message: None,
+            selected_cells: std::collections::HashSet::new(),
+            visible_layers: {
+                let mut layers = std::collections::HashSet::new();
+                layers.insert("OUTLINE".to_string());
+                layers.insert("LABEL".to_string());
+                layers
+            },
+            all_layers: std::collections::HashSet::new(),
+            show_layers_panel: false,
             show_pin_text: true,
             fit_to_view_requested: false,
-            success_message: None,
+            // DEF related selection states
+            selected_components: std::collections::HashSet::new(),
+            selected_pins: std::collections::HashSet::new(),
+            selected_nets: std::collections::HashSet::new(),
             show_components: true,
             show_pins: true,
             show_nets: true,
             show_diearea: true,
-            ..Default::default()
         }
     }
 
@@ -1284,6 +1322,7 @@ impl LefDefViewer {
 
         // Store text to render on top
         let mut texts_to_render = Vec::new();
+        let mut smart_texts_to_render = Vec::new();
 
         if let Some(lef) = &self.lef_data {
             for macro_def in &lef.macros {
@@ -1822,12 +1861,45 @@ impl LefDefViewer {
                         egui::Stroke::new(1.0, egui::Color32::WHITE),
                     );
 
-                    // Draw pin name if zoom is high enough
-                    if self.zoom > 3.0 {
-                        texts_to_render.push((
-                            egui::pos2(pin_x, pin_y - pin_radius - 8.0),
+                    // Draw pin name with smart positioning if zoom is high enough
+                    if self.zoom > 1.0 {
+                        // Reduced threshold from 3.0 to 1.0
+                        let pin_screen_pos = egui::pos2(pin_x, pin_y);
+
+                        // Calculate edge proximity with 8% threshold
+                        let edge_proximity = Self::calculate_pin_edge_proximity(
+                            (pin.x as f32, pin.y as f32),
+                            &def.die_area_points,
+                            self.zoom,
+                            center,
+                            self.pan_x,
+                            self.pan_y,
+                            0.08, // 8% threshold ratio
+                        );
+
+                        // Calculate DIEAREA screen bounds for positioning calculation
+                        let screen_bounds: Vec<egui::Pos2> = def
+                            .die_area_points
+                            .iter()
+                            .map(|(x, y)| {
+                                egui::pos2(
+                                    center.x + self.pan_x + (*x as f32 * self.zoom * 0.001),
+                                    center.y + self.pan_y + (*y as f32 * self.zoom * 0.001),
+                                )
+                            })
+                            .collect();
+
+                        let text_positioning = Self::calculate_smart_text_position(
+                            pin_screen_pos,
+                            edge_proximity,
+                            &screen_bounds,
+                        );
+
+                        // Store smart text positioning info for later rendering
+                        smart_texts_to_render.push((
+                            text_positioning,
                             pin.name.clone(),
-                            egui::FontId::monospace(7.0),
+                            egui::FontId::monospace(14.0),
                             egui::Color32::WHITE,
                         ));
                     }
@@ -1845,6 +1917,11 @@ impl LefDefViewer {
                 font,
                 color,
             );
+        }
+
+        // Render smart positioned text using the new rendering system
+        for (positioning, text, font, color) in smart_texts_to_render {
+            self.render_smart_text_with_outline(&painter, &positioning, &text, font, color);
         }
 
         ui.ctx().request_repaint();
@@ -1935,6 +2012,269 @@ impl LefDefViewer {
                 ui.label("No LEF file loaded");
             }
         });
+    }
+
+    /// Calculate pin proximity to DIEAREA edges
+    fn calculate_pin_edge_proximity(
+        pin_pos: (f32, f32),
+        diearea_bounds: &[(f64, f64)],
+        zoom: f32,
+        center: egui::Pos2,
+        pan_x: f32,
+        pan_y: f32,
+        threshold_ratio: f32,
+    ) -> EdgeProximity {
+        if diearea_bounds.is_empty() {
+            return EdgeProximity::None;
+        }
+
+        // Convert pin to screen coordinates (same as DEF pins)
+        let pin_screen_x = center.x + pan_x + (pin_pos.0 as f32 * zoom * 0.001);
+        let pin_screen_y = center.y + pan_y + (pin_pos.1 as f32 * zoom * 0.001);
+
+        // Convert DIEAREA to screen coordinates
+        let screen_bounds: Vec<egui::Pos2> = diearea_bounds
+            .iter()
+            .map(|(x, y)| {
+                egui::pos2(
+                    center.x + pan_x + (*x as f32 * zoom * 0.001),
+                    center.y + pan_y + (*y as f32 * zoom * 0.001),
+                )
+            })
+            .collect();
+
+        if screen_bounds.len() < 2 {
+            return EdgeProximity::None;
+        }
+
+        // Calculate bounding box for threshold calculation
+        let mut min_x = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+
+        for point in &screen_bounds {
+            min_x = min_x.min(point.x);
+            max_x = max_x.max(point.x);
+            min_y = min_y.min(point.y);
+            max_y = max_y.max(point.y);
+        }
+
+        let width = max_x - min_x;
+        let height = max_y - min_y;
+        let threshold = (width.min(height) * threshold_ratio).max(10.0); // Minimum 10 pixels
+
+        if screen_bounds.len() == 2 {
+            // Rectangle case: simple distance to edges
+            let left_dist = (pin_screen_x - min_x).abs();
+            let right_dist = (pin_screen_x - max_x).abs();
+            let top_dist = (pin_screen_y - min_y).abs();
+            let bottom_dist = (pin_screen_y - max_y).abs();
+
+            let min_dist = left_dist.min(right_dist).min(top_dist).min(bottom_dist);
+
+            if min_dist <= threshold {
+                if min_dist == left_dist {
+                    EdgeProximity::Left(left_dist)
+                } else if min_dist == right_dist {
+                    EdgeProximity::Right(right_dist)
+                } else if min_dist == top_dist {
+                    EdgeProximity::Top(top_dist)
+                } else {
+                    EdgeProximity::Bottom(bottom_dist)
+                }
+            } else {
+                EdgeProximity::None
+            }
+        } else {
+            // Polygon case: distance to polygon edges
+            let pin_point = egui::pos2(pin_screen_x, pin_screen_y);
+            let mut min_distance = f32::INFINITY;
+            let mut closest_edge_type = EdgeProximity::None;
+
+            for i in 0..screen_bounds.len() {
+                let p1 = screen_bounds[i];
+                let p2 = screen_bounds[(i + 1) % screen_bounds.len()];
+
+                let dist = Self::point_to_line_distance(pin_point, p1, p2);
+
+                if dist < min_distance && dist <= threshold {
+                    min_distance = dist;
+
+                    // Determine edge type based on line orientation and position
+                    let line_center_x = (p1.x + p2.x) * 0.5;
+                    let line_center_y = (p1.y + p2.y) * 0.5;
+                    let dx = (p2.x - p1.x).abs();
+                    let dy = (p2.y - p1.y).abs();
+
+                    if dx > dy {
+                        // Horizontal-ish line
+                        if line_center_y <= min_y + height * 0.3 {
+                            closest_edge_type = EdgeProximity::Top(dist);
+                        } else if line_center_y >= max_y - height * 0.3 {
+                            closest_edge_type = EdgeProximity::Bottom(dist);
+                        }
+                    } else {
+                        // Vertical-ish line
+                        if line_center_x <= min_x + width * 0.3 {
+                            closest_edge_type = EdgeProximity::Left(dist);
+                        } else if line_center_x >= max_x - width * 0.3 {
+                            closest_edge_type = EdgeProximity::Right(dist);
+                        }
+                    }
+                }
+            }
+
+            closest_edge_type
+        }
+    }
+
+    /// Calculate distance from point to line segment
+    fn point_to_line_distance(
+        point: egui::Pos2,
+        line_start: egui::Pos2,
+        line_end: egui::Pos2,
+    ) -> f32 {
+        let line_vec = line_end - line_start;
+        let point_vec = point - line_start;
+
+        let line_length_sq = line_vec.x * line_vec.x + line_vec.y * line_vec.y;
+
+        if line_length_sq < 1e-6 {
+            // Line is essentially a point
+            return (point - line_start).length();
+        }
+
+        let t = ((point_vec.x * line_vec.x + point_vec.y * line_vec.y) / line_length_sq)
+            .clamp(0.0, 1.0);
+        let projection = line_start + line_vec * t;
+
+        (point - projection).length()
+    }
+
+    /// Calculate smart text positioning based on edge proximity
+    fn calculate_smart_text_position(
+        pin_screen_pos: egui::Pos2,
+        edge_proximity: EdgeProximity,
+        diearea_screen_bounds: &[egui::Pos2],
+    ) -> TextPositioning {
+        match edge_proximity {
+            EdgeProximity::Left(_) => {
+                // Pin near left edge: place text to the left of pin, right-aligned to edge
+                let left_edge_x = diearea_screen_bounds
+                    .iter()
+                    .map(|p| p.x)
+                    .fold(f32::INFINITY, f32::min);
+                TextPositioning {
+                    pos: egui::pos2(left_edge_x, pin_screen_pos.y),
+                    anchor: egui::Align2::RIGHT_CENTER,
+                    angle: 0.0,
+                }
+            }
+            EdgeProximity::Right(_) => {
+                // Pin near right edge: place text to the right of pin, left-aligned to edge
+                let right_edge_x = diearea_screen_bounds
+                    .iter()
+                    .map(|p| p.x)
+                    .fold(f32::NEG_INFINITY, f32::max);
+                TextPositioning {
+                    pos: egui::pos2(right_edge_x, pin_screen_pos.y),
+                    anchor: egui::Align2::LEFT_CENTER,
+                    angle: 0.0,
+                }
+            }
+            EdgeProximity::Top(_) => {
+                // Pin near top edge: place text above pin, rotated 90° counterclockwise
+                // When rotated -90°, text grows upward from the rotation point
+                TextPositioning {
+                    pos: egui::pos2(pin_screen_pos.x - 10.0, pin_screen_pos.y - 5.0), // More left offset to align with pin center
+                    anchor: egui::Align2::LEFT_TOP,
+                    angle: -std::f32::consts::FRAC_PI_2, // 90 degrees counterclockwise
+                }
+            }
+            EdgeProximity::Bottom(_) => {
+                // Pin near bottom edge: place text below pin, rotated 90° counterclockwise
+                // Back to working configuration: LEFT_TOP anchor with large Y offset to ensure text is below pin
+                TextPositioning {
+                    pos: egui::pos2(pin_screen_pos.x - 10.0, pin_screen_pos.y + 100.0), // Large offset to put text below pin
+                    anchor: egui::Align2::LEFT_TOP,
+                    angle: -std::f32::consts::FRAC_PI_2, // 90 degrees counterclockwise
+                }
+            }
+            EdgeProximity::None => {
+                // Not near any edge: use default positioning
+                TextPositioning {
+                    pos: egui::pos2(pin_screen_pos.x, pin_screen_pos.y - 8.0),
+                    anchor: egui::Align2::CENTER_CENTER,
+                    angle: 0.0,
+                }
+            }
+        }
+    }
+
+    /// Enhanced text rendering with rotation support and outline
+    fn render_smart_text_with_outline(
+        &self,
+        painter: &egui::Painter,
+        positioning: &TextPositioning,
+        text: &str,
+        font: egui::FontId,
+        color: egui::Color32,
+    ) {
+        // Create TextShape with rotation using egui's API
+        let mut text_shape = egui::Shape::text(
+            &painter.fonts(|f| f.clone()),
+            positioning.pos,
+            positioning.anchor,
+            text,
+            font.clone(),
+            color,
+        );
+
+        // Apply rotation if needed
+        if positioning.angle != 0.0 {
+            if let egui::Shape::Text(text_shape) = &mut text_shape {
+                text_shape.angle = positioning.angle;
+            }
+        }
+
+        // Add outline effect for white text by rendering multiple offset copies
+        if color == egui::Color32::WHITE {
+            let outline_color = egui::Color32::BLACK;
+            let outline_offsets = [
+                (-1.0, -1.0),
+                (0.0, -1.0),
+                (1.0, -1.0),
+                (-1.0, 0.0),
+                (1.0, 0.0),
+                (-1.0, 1.0),
+                (0.0, 1.0),
+                (1.0, 1.0),
+            ];
+
+            for (dx, dy) in outline_offsets {
+                let outline_pos = egui::pos2(positioning.pos.x + dx, positioning.pos.y + dy);
+                let mut outline_shape = egui::Shape::text(
+                    &painter.fonts(|f| f.clone()),
+                    outline_pos,
+                    positioning.anchor,
+                    text,
+                    font.clone(),
+                    outline_color,
+                );
+
+                // Apply rotation to outline if needed
+                if positioning.angle != 0.0 {
+                    if let egui::Shape::Text(outline_shape) = &mut outline_shape {
+                        outline_shape.angle = positioning.angle;
+                    }
+                }
+                painter.add(outline_shape);
+            }
+        }
+
+        // Render main text on top
+        painter.add(text_shape);
     }
 }
 
