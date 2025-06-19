@@ -2194,9 +2194,9 @@ impl LefDefViewer {
             }
             EdgeProximity::Bottom(_) => {
                 // Pin near bottom edge: place text below pin, rotated 90° counterclockwise
-                // Back to working configuration: LEFT_TOP anchor with large Y offset to ensure text is below pin
+                // When rotated -90°, text grows upward from the rotation point
                 TextPositioning {
-                    pos: egui::pos2(pin_screen_pos.x - 10.0, pin_screen_pos.y + 100.0), // Large offset to put text below pin
+                    pos: egui::pos2(pin_screen_pos.x - 10.0, pin_screen_pos.y + 90.0), // More left offset to align with pin center
                     anchor: egui::Align2::LEFT_TOP,
                     angle: -std::f32::consts::FRAC_PI_2, // 90 degrees counterclockwise
                 }
