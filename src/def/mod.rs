@@ -75,7 +75,7 @@ pub struct DefComponent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefGCellGrid {
     pub offset: f64,
-    pub num: i32,
+    pub count: usize,
     pub step: f64,
 }
 

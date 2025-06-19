@@ -10,6 +10,7 @@ use crate::def::{DefPolygon, DefRect, DefVia, DefViaLayer};
 
 /// Context for parsing a single VIA
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ViaContext {
     pub name: String,
     pub via_rule: Option<String>,
@@ -60,6 +61,12 @@ pub struct DefViaParser;
 impl DefViaParser {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for DefViaParser {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -268,15 +275,13 @@ impl DefViaParser {
 
         let layer_name = parts[2].to_string();
         let mut part_idx = 3;
-        let mut mask_num: Option<i32> = None;
+        let mut mask_num = None;
 
-        // Check for MASK after layer name
-        if part_idx < parts.len() && parts[part_idx] == "MASK" {
-            if part_idx + 1 < parts.len() {
-                if let Ok(mask) = parts[part_idx + 1].parse::<i32>() {
-                    mask_num = Some(mask);
-                    part_idx += 2;
-                }
+        // 修复可折叠的if语句
+        if part_idx < parts.len() && parts[part_idx] == "MASK" && part_idx + 1 < parts.len() {
+            if let Ok(mask) = parts[part_idx + 1].parse::<i32>() {
+                mask_num = Some(mask);
+                part_idx += 2;
             }
         }
 

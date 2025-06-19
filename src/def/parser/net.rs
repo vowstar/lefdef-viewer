@@ -9,6 +9,7 @@ use crate::def::DefNet;
 
 /// Connection in a net
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct NetConnection {
     pub instance: String,
     pub pin: String,
@@ -17,6 +18,7 @@ pub struct NetConnection {
 
 /// Routing information for a net
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct NetRouting {
     pub layer: String,
     pub points: Vec<(f64, f64)>,
@@ -61,6 +63,12 @@ pub struct DefNetParser;
 impl DefNetParser {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for DefNetParser {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

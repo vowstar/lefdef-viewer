@@ -44,6 +44,12 @@ impl DefPinParser {
     }
 }
 
+impl Default for DefPinParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DefItemParser for DefPinParser {
     type Item = DefPin;
     type Context = PinContext;

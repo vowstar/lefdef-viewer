@@ -3,7 +3,6 @@
 
 use eframe::egui;
 use egui::epaint::{PathShape, PathStroke};
-use geo::{Coord, LineString, Polygon as GeoPolygon};
 use rfd::FileDialog;
 
 use crate::def::{reader::DefReader, Def};
@@ -13,11 +12,11 @@ use crate::lef::{reader::LefReader, Lef};
 /// Edge proximity detection result
 #[derive(Debug, Clone)]
 enum EdgeProximity {
-    Left(f32),   // Distance to left edge
-    Right(f32),  // Distance to right edge
-    Top(f32),    // Distance to top edge
-    Bottom(f32), // Distance to bottom edge
-    None,        // Not close to any edge
+    Left(()),   // Distance to left edge
+    Right(()),  // Distance to right edge
+    Top(()),    // Distance to top edge
+    Bottom(()), // Distance to bottom edge
+    None,       // Not near any edge
 }
 
 /// Smart text positioning configuration
@@ -215,10 +214,10 @@ impl LefDefViewer {
 
         // Apply type-specific color adjustment
         egui::Color32::from_rgba_unmultiplied(
-            ((base_color.r() as f32 * type_adjustment.0) as u8).min(255),
-            ((base_color.g() as f32 * type_adjustment.1) as u8).min(255),
-            ((base_color.b() as f32 * type_adjustment.2) as u8).min(255),
-            ((base_color.a() as f32 * type_adjustment.3) as u8).min(255),
+            (base_color.r() as f32 * type_adjustment.0) as u8,
+            (base_color.g() as f32 * type_adjustment.1) as u8,
+            (base_color.b() as f32 * type_adjustment.2) as u8,
+            (base_color.a() as f32 * type_adjustment.3) as u8,
         )
     }
 
@@ -292,6 +291,7 @@ impl LefDefViewer {
     }
 
     // Utility function to check if a polygon is convex
+    #[allow(dead_code)]
     fn is_convex(points: &[egui::Pos2]) -> bool {
         if points.len() < 3 {
             return true;
@@ -405,7 +405,8 @@ impl LefDefViewer {
 
                 if line_coords.len() >= 4 {
                     // At least 3 unique points + closing point
-                    if let Ok(line_string) = LineString::try_from(line_coords) {
+                    {
+                        let line_string = LineString::from(line_coords);
                         let geo_polygon = GeoPolygon::new(line_string, vec![]);
 
                         if let Some(existing_result) = result {
@@ -441,7 +442,8 @@ impl LefDefViewer {
 
                     if line_coords.len() >= 4 {
                         // At least 3 unique points + closing point
-                        if let Ok(line_string) = LineString::try_from(line_coords) {
+                        {
+                            let line_string = LineString::from(line_coords);
                             let geo_polygon = GeoPolygon::new(line_string, vec![]);
 
                             // Subtract from current result
@@ -506,6 +508,8 @@ impl LefDefViewer {
         final_polygons
     }
 
+    /// Calculate bounds of all visible elements
+    #[allow(dead_code)]
     fn calculate_bounds(&self) -> Option<(f32, f32, f32, f32)> {
         let mut min_x = f32::INFINITY;
         let mut min_y = f32::INFINITY;
@@ -520,7 +524,7 @@ impl LefDefViewer {
                     continue;
                 }
 
-                let mut macro_has_content = false;
+                // let mut macro_has_content = false;
                 let macro_x = macro_def.origin.0 as f32;
                 let macro_y = macro_def.origin.1 as f32;
 
@@ -534,7 +538,7 @@ impl LefDefViewer {
                 min_y = min_y.min(bottom);
                 max_x = max_x.max(right);
                 max_y = max_y.max(top);
-                macro_has_content = true;
+                let _ = true; // Removed macro_has_content assignment
 
                 // Include pin shapes in bounds calculation
                 for pin in &macro_def.pins {
@@ -552,7 +556,7 @@ impl LefDefViewer {
                                 min_y = min_y.min(rect_bottom);
                                 max_x = max_x.max(rect_right);
                                 max_y = max_y.max(rect_top);
-                                macro_has_content = true;
+                                let _ = true; // Removed macro_has_content assignment
                             }
                         }
 
@@ -568,7 +572,7 @@ impl LefDefViewer {
                                     min_y = min_y.min(point_y);
                                     max_x = max_x.max(point_x);
                                     max_y = max_y.max(point_y);
-                                    macro_has_content = true;
+                                    let _ = true; // Removed macro_has_content assignment
                                 }
                             }
                         }
@@ -590,7 +594,7 @@ impl LefDefViewer {
                             min_y = min_y.min(rect_bottom);
                             max_x = max_x.max(rect_right);
                             max_y = max_y.max(rect_top);
-                            macro_has_content = true;
+                            let _ = true; // Removed macro_has_content assignment
                         }
                     }
 
@@ -606,15 +610,14 @@ impl LefDefViewer {
                                 min_y = min_y.min(point_y);
                                 max_x = max_x.max(point_x);
                                 max_y = max_y.max(point_y);
-                                macro_has_content = true;
+                                let _ = true; // Removed macro_has_content assignment
                             }
                         }
                     }
                 }
 
-                if macro_has_content {
-                    found_any = true;
-                }
+                // Always set found_any to true since we've processed this macro
+                found_any = true;
             }
         }
 
@@ -1462,7 +1465,7 @@ impl LefDefViewer {
                             );
 
                             // Render the final computed polygons
-                            for (i, screen_points) in final_polygons.iter().enumerate() {
+                            for screen_points in final_polygons.iter() {
                                 if screen_points.len() >= 3 {
                                     // Calculate bounds for text positioning
                                     let mut poly_min_x = f32::INFINITY;
@@ -2049,8 +2052,8 @@ impl LefDefViewer {
         }
 
         // Convert pin to screen coordinates (same as DEF pins)
-        let pin_screen_x = center.x + pan_x + (pin_pos.0 as f32 * zoom * 0.001);
-        let pin_screen_y = center.y + pan_y + (pin_pos.1 as f32 * zoom * 0.001);
+        let pin_screen_x = center.x + pan_x + (pin_pos.0 * zoom * 0.001);
+        let pin_screen_y = center.y + pan_y + (pin_pos.1 * zoom * 0.001);
 
         // Convert DIEAREA to screen coordinates
         let screen_bounds: Vec<egui::Pos2> = diearea_bounds
@@ -2095,13 +2098,13 @@ impl LefDefViewer {
 
             if min_dist <= threshold {
                 if min_dist == left_dist {
-                    EdgeProximity::Left(left_dist)
+                    EdgeProximity::Left(())
                 } else if min_dist == right_dist {
-                    EdgeProximity::Right(right_dist)
+                    EdgeProximity::Right(())
                 } else if min_dist == top_dist {
-                    EdgeProximity::Top(top_dist)
+                    EdgeProximity::Top(())
                 } else {
-                    EdgeProximity::Bottom(bottom_dist)
+                    EdgeProximity::Bottom(())
                 }
             } else {
                 EdgeProximity::None
@@ -2130,16 +2133,16 @@ impl LefDefViewer {
                     if dx > dy {
                         // Horizontal-ish line
                         if line_center_y <= min_y + height * 0.3 {
-                            closest_edge_type = EdgeProximity::Top(dist);
+                            closest_edge_type = EdgeProximity::Top(());
                         } else if line_center_y >= max_y - height * 0.3 {
-                            closest_edge_type = EdgeProximity::Bottom(dist);
+                            closest_edge_type = EdgeProximity::Bottom(());
                         }
                     } else {
                         // Vertical-ish line
                         if line_center_x <= min_x + width * 0.3 {
-                            closest_edge_type = EdgeProximity::Left(dist);
+                            closest_edge_type = EdgeProximity::Left(());
                         } else if line_center_x >= max_x - width * 0.3 {
-                            closest_edge_type = EdgeProximity::Right(dist);
+                            closest_edge_type = EdgeProximity::Right(());
                         }
                     }
                 }

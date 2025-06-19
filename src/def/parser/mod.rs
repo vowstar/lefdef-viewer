@@ -14,6 +14,7 @@ pub mod pin;
 pub mod via;
 
 use std::collections::HashMap;
+use std::default::Default;
 use std::fmt;
 
 /// Result type for parsing operations
@@ -21,6 +22,7 @@ pub type ParseResult<T> = Result<T, ParseError>;
 
 /// Error types that can occur during parsing
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ParseError {
     UnexpectedEof,
     InvalidFormat(String),
@@ -42,25 +44,35 @@ pub enum ParseError {
     },
 }
 
-/// Loop detector, used to prevent infinite loops
+/// LoopDetector, used to prevent infinite loops
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct LoopDetector {
-    line_counts: HashMap<usize, usize>,
+    line_counts: HashMap<String, usize>,
     max_repeats: usize,
 }
 
 impl LoopDetector {
-    pub fn new() -> Self {
+    /// Create a new loop detector with specified maximum repeats
+    pub fn new(max_repeats: usize) -> Self {
         Self {
             line_counts: HashMap::new(),
-            max_repeats: 10,
+            max_repeats,
         }
     }
 
-    pub fn check_infinite_loop(&mut self, line_index: usize) -> bool {
-        let count = self.line_counts.entry(line_index).or_insert(0);
+    /// Check if a line has been processed too many times (potential infinite loop)
+    #[allow(dead_code)]
+    pub fn check_infinite_loop(&mut self, line_index: &str) -> bool {
+        let count = self.line_counts.entry(line_index.to_string()).or_insert(0);
         *count += 1;
         *count > self.max_repeats
+    }
+}
+
+impl Default for LoopDetector {
+    fn default() -> Self {
+        Self::new(10)
     }
 }
 
@@ -110,8 +122,9 @@ impl fmt::Display for ParseError {
     }
 }
 
-/// Result of processing a continuation line
+/// Result of handling a continuation line
 #[derive(Debug, PartialEq)]
+#[allow(dead_code)]
 pub enum ContinuationResult {
     /// Continue processing more lines
     Continue,
@@ -123,8 +136,9 @@ pub enum ContinuationResult {
     Error(String),
 }
 
-/// Context for tracking parsing state
+/// Context for DEF parsing operations
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ParseContext {
     pub current_line: usize,
     pub section_name: String,
@@ -133,6 +147,7 @@ pub struct ParseContext {
     pub processed_lines: std::collections::HashSet<usize>,
 }
 
+#[allow(dead_code)]
 impl ParseContext {
     pub fn new(section_name: String, start_line: usize) -> Self {
         Self {

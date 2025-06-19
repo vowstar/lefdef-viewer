@@ -4,9 +4,7 @@
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while1},
-    character::complete::{char, i32 as parse_i32, multispace0, space1},
-    combinator::opt,
-    error::ParseError,
+    character::complete::{char, multispace0, space1},
     multi::separated_list0,
     number::complete::double,
     sequence::{delimited, preceded, terminated, tuple},
@@ -15,12 +13,14 @@ use nom::{
 
 use super::{Def, DefGCellGrid, DefPolygon, DefVia, DefViaLayer};
 
+#[allow(dead_code)]
 fn identifier(input: &str) -> IResult<&str, &str> {
     take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '.' || c == '/' || c == '-')(
         input,
     )
 }
 
+#[allow(dead_code)]
 fn string_literal(input: &str) -> IResult<&str, &str> {
     alt((
         delimited(char('"'), take_until("\""), char('"')),
@@ -28,12 +28,13 @@ fn string_literal(input: &str) -> IResult<&str, &str> {
     ))(input)
 }
 
+#[allow(dead_code)]
 fn parse_die_area(input: &str) -> IResult<&str, Vec<(f64, f64)>> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("DIEAREA")(input)?;
-    let (input, _) = space1(input)?;
+    let (input, _) = multispace0(input)?;
     let (input, points) = separated_list0(
-        space1,
+        multispace0,
         tuple((
             preceded(tag("("), double),
             preceded(space1, terminated(double, tag(")"))),
@@ -45,45 +46,64 @@ fn parse_die_area(input: &str) -> IResult<&str, Vec<(f64, f64)>> {
     Ok((input, points))
 }
 
+#[allow(dead_code)]
 fn parse_gcell_grid(input: &str) -> IResult<&str, (Vec<DefGCellGrid>, Vec<DefGCellGrid>)> {
     let (input, _) = multispace0(input)?;
+    let mut rest = input;
+    let mut x_grids = Vec::new();
+    let mut y_grids = Vec::new();
 
-    let mut gcell_x = Vec::new();
-    let mut gcell_y = Vec::new();
-    let mut remaining = input;
-
-    while let Ok((rest, _)) = preceded(
-        multispace0::<&str, nom::error::Error<&str>>,
-        tag("GCELLGRID"),
-    )(remaining)
+    while let Ok((new_rest, grid_type)) =
+        alt::<_, _, nom::error::Error<&str>, _>((tag("GCELLGRID X"), tag("GCELLGRID Y")))(rest)
     {
-        let (rest, _) = space1(rest)?;
-        let (rest, direction) = identifier(rest)?;
-        let (rest, _) = space1(rest)?;
-        let (rest, offset) = double(rest)?;
-        let (rest, _) = space1(rest)?;
-        let (rest, _) = tag("DO")(rest)?;
-        let (rest, _) = space1(rest)?;
-        let (rest, num) = parse_i32(rest)?;
-        let (rest, _) = space1(rest)?;
-        let (rest, _) = tag("STEP")(rest)?;
-        let (rest, _) = space1(rest)?;
-        let (rest, step) = double(rest)?;
-        let (rest, _) = multispace0(rest)?;
-        let (rest, _) = tag(";")(rest)?;
+        let is_x = grid_type.ends_with('X');
+        rest = new_rest;
+        let (new_rest, _) = multispace0(rest)?;
+        rest = new_rest;
 
-        let grid = DefGCellGrid { offset, num, step };
+        let (new_rest, offset) = double(rest)?;
+        rest = new_rest;
+        let (new_rest, _) = multispace0(rest)?;
+        rest = new_rest;
 
-        if direction.to_uppercase() == "X" {
-            gcell_x.push(grid);
-        } else if direction.to_uppercase() == "Y" {
-            gcell_y.push(grid);
+        let (new_rest, _) = tag("DO")(rest)?;
+        rest = new_rest;
+        let (new_rest, _) = multispace0(rest)?;
+        rest = new_rest;
+
+        let (new_rest, count_str) = take_while1(|c: char| c.is_ascii_digit())(rest)?;
+        let count = count_str.parse::<usize>().unwrap_or(0);
+        rest = new_rest;
+        let (new_rest, _) = multispace0(rest)?;
+        rest = new_rest;
+
+        let (new_rest, _) = tag("STEP")(rest)?;
+        rest = new_rest;
+        let (new_rest, _) = multispace0(rest)?;
+        rest = new_rest;
+
+        let (new_rest, step) = double(rest)?;
+        rest = new_rest;
+        let (new_rest, _) = multispace0(rest)?;
+        rest = new_rest;
+
+        let (new_rest, _) = tag(";")(rest)?;
+        rest = new_rest;
+
+        let grid = DefGCellGrid {
+            offset,
+            count,
+            step,
+        };
+
+        if is_x {
+            x_grids.push(grid);
+        } else {
+            y_grids.push(grid);
         }
-
-        remaining = rest;
     }
 
-    Ok((remaining, (gcell_x, gcell_y)))
+    Ok((rest, (x_grids, y_grids)))
 }
 
 fn parse_def_simple(input: &str) -> IResult<&str, Def> {

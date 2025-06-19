@@ -53,6 +53,7 @@ pub fn parse_coordinate_pair(parts: &[&str], start_index: usize) -> Option<(f64,
 }
 
 /// Parse coordinate pair from a line that might contain it
+#[allow(dead_code)]
 pub fn find_coordinate_pair(line: &str) -> Option<(f64, f64)> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     for i in 0..parts.len() {
@@ -89,7 +90,7 @@ pub fn is_item_header(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.starts_with('-')
         && trimmed.len() > 1
-        && trimmed.chars().nth(1).map_or(false, |c| c.is_whitespace())
+        && trimmed.chars().nth(1).is_some_and(|c| c.is_whitespace())
 }
 
 /// Check if a line marks the end of a section

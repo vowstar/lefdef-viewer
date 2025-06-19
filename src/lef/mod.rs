@@ -9,7 +9,7 @@
 pub mod lef_parser;
 pub mod reader;
 
-pub use reader::LefReader;
+// pub use reader::LefReader;
 
 /// Main LEF file structure
 #[derive(Debug, Clone)]
@@ -26,6 +26,7 @@ pub struct LefMacro {
     pub origin: (f64, f64),
     pub size_x: f64,
     pub size_y: f64,
+    #[allow(dead_code)]
     pub symmetry: Vec<String>,
     pub site: String,
     pub pins: Vec<LefPin>,
@@ -37,7 +38,9 @@ pub struct LefMacro {
 pub struct LefPin {
     pub name: String,
     pub direction: String,
+    #[allow(dead_code)]
     pub use_type: String,
+    #[allow(dead_code)]
     pub shape: String,
     pub ports: Vec<LefPort>,
 }

@@ -35,6 +35,7 @@ fn identifier(input: &str) -> IResult<&str, &str> {
     ))(input)
 }
 
+#[allow(dead_code)]
 fn string_literal(input: &str) -> IResult<&str, &str> {
     alt((
         delimited(char('"'), take_until("\""), char('"')),
@@ -42,6 +43,7 @@ fn string_literal(input: &str) -> IResult<&str, &str> {
     ))(input)
 }
 
+#[allow(dead_code)]
 fn parse_rect(input: &str) -> IResult<&str, LefRect> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("LAYER")(input)?;
@@ -72,6 +74,7 @@ fn parse_rect(input: &str) -> IResult<&str, LefRect> {
     ))
 }
 
+#[allow(dead_code)]
 fn parse_polygon(input: &str) -> IResult<&str, LefPolygon> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("LAYER")(input)?;
@@ -124,18 +127,21 @@ fn parse_polygon(input: &str) -> IResult<&str, LefPolygon> {
 }
 
 // Similar to parse_pin, this is handled manually in parse_simple_macro
+#[allow(dead_code)]
 fn parse_port(_input: &str) -> IResult<&str, LefPort> {
     unimplemented!("PORT parsing is handled by parse_simple_macro")
 }
 
 // This parser is used for the parts that the manual parser doesn't handle
 // But our manual parser already handles the full PIN parsing, so this is mainly a stub
+#[allow(dead_code)]
 fn parse_pin(_input: &str) -> IResult<&str, LefPin> {
     // This function is not actually used since parse_simple_macro handles all PIN parsing manually
     // Keeping it as a stub to satisfy the interface
     unimplemented!("PIN parsing is handled by parse_simple_macro")
 }
 
+#[allow(dead_code)]
 fn parse_obstruction(input: &str) -> IResult<&str, LefObstruction> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("OBS")(input)?;
@@ -159,18 +165,18 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
 
     // Parse macro content with PIN extraction
     let remaining = input;
-    let mut class = String::new();
-    let mut source = String::new();
-    let mut site_name = String::new();
-    let mut origin_x = 0.0;
-    let mut origin_y = 0.0;
+    let mut pins: Vec<LefPin> = Vec::new();
+    let mut obstructions: Vec<LefObstruction> = Vec::new();
     let mut size_x = 0.0;
     let mut size_y = 0.0;
-    let mut foreign_name = String::new();
-    let mut foreign_x = 0.0;
-    let mut foreign_y = 0.0;
-    let mut pins = Vec::new();
-    let mut obstruction = None;
+    let mut origin_x = 0.0;
+    let mut origin_y = 0.0;
+    let mut class = String::new();
+    let mut site = String::new();
+    let mut _source = String::new();
+    let mut _foreign_x = 0.0;
+    let mut _foreign_y = 0.0;
+    let symmetry = Vec::new();
 
     let end_pattern = format!("END {}", name);
     let lines: Vec<&str> = remaining.lines().collect();
@@ -200,15 +206,15 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                     LefMacro {
                         name: name.to_string(),
                         class,
-                        foreign: foreign_name,
+                        foreign: _source,
                         origin: (origin_x, origin_y),
                         size_x,
                         size_y,
-                        symmetry: Vec::new(),
-                        site: site_name,
+                        symmetry,
+                        site,
                         pins,
-                        obs: if let Some(obs) = obstruction {
-                            vec![obs]
+                        obs: if !obstructions.is_empty() {
+                            obstructions
                         } else {
                             vec![]
                         },
@@ -228,10 +234,10 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                 class = parts[1].trim_end_matches(';').to_string();
             }
             "SOURCE" if parts.len() > 1 => {
-                source = parts[1].trim_end_matches(';').to_string();
+                _source = parts[1].trim_end_matches(';').to_string();
             }
             "SITE" if parts.len() > 1 => {
-                site_name = parts[1].trim_end_matches(';').to_string();
+                site = parts[1].trim_end_matches(';').to_string();
             }
             "ORIGIN" if parts.len() > 2 => {
                 if let (Ok(x), Ok(y)) = (parts[1].parse::<f64>(), parts[2].parse::<f64>()) {
@@ -246,10 +252,10 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                 }
             }
             "FOREIGN" if parts.len() > 3 => {
-                foreign_name = parts[1].to_string();
+                _source = parts[1].to_string();
                 if let (Ok(x), Ok(y)) = (parts[2].parse::<f64>(), parts[3].parse::<f64>()) {
-                    foreign_x = x;
-                    foreign_y = y;
+                    _foreign_x = x;
+                    _foreign_y = y;
                 }
             }
             "PIN" if parts.len() > 1 => {
@@ -545,16 +551,12 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                 }
 
                 // Store the obstruction data in the macro
-                obstruction = if !rects.is_empty() || !polygons.is_empty() {
-                    Some(LefObstruction { rects, polygons })
-                } else {
-                    None
-                };
+                obstructions.push(LefObstruction { rects, polygons });
 
                 println!(
                     "🔧   OBS parsing complete: {} rects, {} polygons",
-                    obstruction.as_ref().map_or(0, |o| o.rects.len()),
-                    obstruction.as_ref().map_or(0, |o| o.polygons.len())
+                    obstructions.last().unwrap().rects.len(),
+                    obstructions.last().unwrap().polygons.len()
                 );
                 continue;
             }
@@ -574,6 +576,7 @@ fn parse_macro(input: &str) -> IResult<&str, LefMacro> {
     parse_simple_macro(input)
 }
 
+#[allow(dead_code)]
 fn skip_to_macro(input: &str) -> IResult<&str, &str> {
     let mut remaining = input;
 
@@ -583,7 +586,7 @@ fn skip_to_macro(input: &str) -> IResult<&str, &str> {
             break;
         }
 
-        if let Ok((rest, _)) = tag::<&str, &str, nom::error::Error<&str>>("MACRO")(rest) {
+        if let Ok((_rest, _)) = tag::<&str, &str, nom::error::Error<&str>>("MACRO")(rest) {
             return Ok((remaining, remaining));
         }
 

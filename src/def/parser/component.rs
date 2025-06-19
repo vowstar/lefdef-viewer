@@ -4,8 +4,7 @@
 //! COMPONENT parser implementation for DEF files
 //! TODO: Implement using the unified framework
 
-use super::{ContinuationResult, DefItemParser, ParseError, ParseResult};
-use crate::def::parser::common::{parse_coordinate_pair, parse_identifier};
+use super::{ContinuationResult, DefItemParser, ParseResult};
 use crate::def::{DefComponent, DefComponentPlacement};
 
 /// Context for parsing a single component
