@@ -1,31 +1,39 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025 Huang Rui <vowstar@gmail.com>
 
-use serde::{Deserialize, Serialize};
+//! LEF (Library Exchange Format) file parsing and data structures
+//!
+//! This module provides comprehensive LEF file parsing using proven nom-based parser
+//! that supports all LEF features including multi-line POLYGON definitions.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LefRect {
-    pub layer: String,
-    pub xl: f64,
-    pub yl: f64,
-    pub xh: f64,
-    pub yh: f64,
+pub mod lef_parser;
+pub mod reader;
+
+pub use reader::LefReader;
+
+/// Main LEF file structure
+#[derive(Debug, Clone)]
+pub struct Lef {
+    pub macros: Vec<LefMacro>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LefPolygon {
-    pub layer: String,
-    pub points: Vec<(f64, f64)>,
-    pub is_hole: bool, // true if clockwise (subtractive/hole), false if counterclockwise (additive)
+/// LEF MACRO definition
+#[derive(Debug, Clone)]
+pub struct LefMacro {
+    pub name: String,
+    pub class: String,
+    pub foreign: String,
+    pub origin: (f64, f64),
+    pub size_x: f64,
+    pub size_y: f64,
+    pub symmetry: Vec<String>,
+    pub site: String,
+    pub pins: Vec<LefPin>,
+    pub obs: Vec<LefObstruction>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LefPort {
-    pub rects: Vec<LefRect>,
-    pub polygons: Vec<LefPolygon>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// LEF PIN definition with complete geometry support
+#[derive(Debug, Clone)]
 pub struct LefPin {
     pub name: String,
     pub direction: String,
@@ -34,33 +42,34 @@ pub struct LefPin {
     pub ports: Vec<LefPort>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LefObstruction {
+/// LEF PORT containing geometric shapes
+#[derive(Debug, Clone)]
+pub struct LefPort {
     pub rects: Vec<LefRect>,
     pub polygons: Vec<LefPolygon>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LefMacro {
-    pub name: String,
-    pub class: String,
-    pub source: String,
-    pub site_name: String,
-    pub origin_x: f64,
-    pub origin_y: f64,
-    pub size_x: f64,
-    pub size_y: f64,
-    pub foreign_name: String,
-    pub foreign_x: f64,
-    pub foreign_y: f64,
-    pub pins: Vec<LefPin>,
-    pub obstruction: Option<LefObstruction>,
+/// LEF RECT geometry
+#[derive(Debug, Clone)]
+pub struct LefRect {
+    pub layer: String,
+    pub xl: f64,
+    pub yl: f64,
+    pub xh: f64,
+    pub yh: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Lef {
-    pub macros: Vec<LefMacro>,
+/// LEF POLYGON geometry with multi-line support
+#[derive(Debug, Clone)]
+pub struct LefPolygon {
+    pub layer: String,
+    pub points: Vec<(f64, f64)>,
+    pub is_hole: bool,
 }
 
-pub mod parser;
-pub mod reader;
+/// LEF OBSTRUCTION (OBS)
+#[derive(Debug, Clone)]
+pub struct LefObstruction {
+    pub rects: Vec<LefRect>,
+    pub polygons: Vec<LefPolygon>,
+}

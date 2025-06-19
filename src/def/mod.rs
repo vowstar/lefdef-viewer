@@ -34,19 +34,42 @@ pub struct DefPin {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefNet {
     pub name: String,
+    pub connections: usize,
+    pub pins: usize,
+    pub use_type: String,
+    pub weight: Option<f64>,
+    pub source: String,
+    pub pattern: String,
+    pub shielded: bool,
     pub instances: Vec<String>,
-    pub pins: Vec<String>,
+    pub instance_pins: Vec<String>,
+    pub routing: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DefComponent {
-    pub id: String,
-    pub name: String,
-    pub status: String,
-    pub source: String,
-    pub orient: String,
+pub struct DefPlacement {
+    pub placement_type: String, // PLACED, FIXED, COVER, UNPLACED
     pub x: f64,
     pub y: f64,
+    pub orientation: String, // N, S, E, W, FN, FS, FE, FW
+}
+
+// Alias for component placement to maintain compatibility
+pub type DefComponentPlacement = DefPlacement;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefComponent {
+    pub name: String,
+    pub macro_name: String,
+    pub placement: Option<DefPlacement>,
+    pub routing_halo: Option<(f64, f64, f64, f64)>, // left, bottom, right, top
+    pub source: Option<String>,
+    pub weight: Option<f64>,
+    pub eeq: Option<String>,
+    pub generate: Option<String>,
+    pub power: Option<f64>,
+    pub ground: Option<String>,
+    pub properties: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +116,11 @@ pub struct DefViaLayer {
 pub struct DefVia {
     pub name: String,
     pub layers: Vec<DefViaLayer>,
+    pub via_rule: Option<String>,
+    pub cut_size: Option<(f64, f64)>,
+    pub cut_spacing: Option<(f64, f64)>,
+    pub enclosure: Vec<(String, f64, f64)>,
+    pub pattern: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,5 +137,6 @@ pub struct Def {
     pub vias: Vec<DefVia>,
 }
 
+pub mod def_parser;
 pub mod parser;
 pub mod reader;

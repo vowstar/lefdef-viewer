@@ -15,6 +15,7 @@ target
 **/mutants.out*/
 
 # IDE config files
-.vscode
-.cursor
 .claude
+.cursor
+.tasks
+.vscode

@@ -1,0 +1,92 @@
+VERSION 5.8 ;
+NAMESCASESENSITIVE ON ;
+DIVIDERCHAR "/" ;
+BUSBITCHARS "[]" ;
+
+DESIGN complex_design ;
+UNITS DISTANCE MICRONS 2000 ;
+
+DIEAREA ( 0 0 ) ( 200000 200000 ) ;
+
+COMPONENTS 5 ;
+    - INV1 INVX1 
+      + SOURCE USER 
+      + WEIGHT 1.5
+      + PLACED ( 10000 20000 ) N ;
+    - NAND1 NAND2X1 
+      + SOURCE DIST 
+      + FIXED ( 30000 20000 ) FN ;
+    - BUF1 BUFX1 
+      + SOURCE NETLIST 
+      + PLACED ( 50000 20000 ) FS ;
+    - DFF1 DFFX1 
+      + ROUTINGHALO 200 200 200 200
+      + PLACED ( 70000 20000 ) FW ;
+    - MUX1 MUX2X1 
+      + ROUTINGHALO 300 300 300 300
+      + PROPERTY DP_SIZE 2
+      + PROPERTY POWER_DOMAIN "PD1"
+      + FIXED ( 90000 20000 ) FE ;
+END COMPONENTS
+
+PINS 5 ;
+    - IN1 + NET IN1 + DIRECTION INPUT 
+      + FIXED ( 5000 50000 ) N 
+      + LAYER M1 ( 0 0 ) ( 200 200 ) ;
+    - IN2 + NET IN2 + DIRECTION INPUT 
+      + FIXED ( 5000 60000 ) N 
+      + LAYER M1 ( 0 0 ) ( 200 200 ) ;
+    - CLK + NET CLK + DIRECTION INPUT 
+      + USE CLOCK
+      + FIXED ( 5000 70000 ) N 
+      + LAYER M1 ( 0 0 ) ( 200 200 ) ;
+    - OUT1 + NET OUT1 + DIRECTION OUTPUT 
+      + FIXED ( 195000 50000 ) N 
+      + LAYER M1 ( 0 0 ) ( 200 200 ) ;
+    - OUT2 + NET OUT2 + DIRECTION OUTPUT 
+      + FIXED ( 195000 60000 ) N 
+      + LAYER M1 ( 0 0 ) ( 200 200 ) ;
+END PINS
+
+NETS 6 ;
+    - IN1 ( PIN IN1 ) 
+      ( INV1 A ) 
+      ( MUX1 A ) ;
+    - IN2 ( PIN IN2 ) 
+      ( NAND1 A ) 
+      ( MUX1 B ) ;
+    - CLK ( PIN CLK ) 
+      ( DFF1 CLK ) ;
+    - net1 ( INV1 Y ) 
+      ( NAND1 B ) ;
+    - OUT1 ( PIN OUT1 ) 
+      ( NAND1 Y ) 
+      ( BUF1 A ) ;
+    - OUT2 ( PIN OUT2 ) 
+      ( MUX1 Y ) 
+      ( DFF1 D ) 
+      ( BUF1 Y ) ;
+END NETS
+
+VIAS 2 ;
+    - VIA12 
+      + RECT M1 ( 0 0 ) ( 200 200 ) 
+      + RECT M2 ( 0 0 ) ( 200 200 ) ;
+    - VIA23 
+      + RECT M2 ( 0 0 ) ( 200 200 ) 
+      + RECT M3 ( 0 0 ) ( 200 200 ) 
+      + RECT VIA2 ( 50 50 ) ( 150 150 ) ;
+END VIAS
+
+GCELLGRID X 0 DO 10 STEP 20000 ;
+GCELLGRID Y 0 DO 10 STEP 20000 ;
+
+TRACKS X 0 DO 200 STEP 1000 LAYER M1 ;
+TRACKS Y 0 DO 200 STEP 1000 LAYER M1 ;
+
+ROWS 2 ;
+    - ROW1 core 0 0 N DO 100 BY 1 STEP 2000 2000 ;
+    - ROW2 core 0 2000 N DO 100 BY 1 STEP 2000 2000 ;
+END ROWS
+
+END DESIGN 

@@ -164,117 +164,46 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                     );
                     i += 1;
 
-                    // Parse components until END COMPONENTS
-                    while i < lines.len() {
-                        let comp_line = lines[i].trim();
-                        if comp_line.starts_with("END COMPONENTS") {
-                            break;
-                        }
+                    // Use the new unified parsing framework
+                    let component_parser = crate::def::parser::component::DefComponentParser;
+                    let multi_parser = crate::def::parser::MultiLineParser::new(component_parser)
+                        .with_debug(true)
+                        .with_max_iterations(50000)
+                        .with_timeout(std::time::Duration::from_secs(120))
+                        .with_max_repeated_lines(10)
+                        .with_max_lines_per_item(500);
 
-                        let comp_parts: Vec<&str> = comp_line.split_whitespace().collect();
-                        if comp_parts.len() >= 2 && comp_parts[0] == "-" {
-                            // Component line: - componentName macroName [+ attributes...]
-                            let comp_id = comp_parts[1].to_string();
-                            let comp_name = if comp_parts.len() > 2 {
-                                comp_parts[2].to_string()
-                            } else {
-                                "unknown".to_string()
-                            };
-
-                            let mut x = 0.0;
-                            let mut y = 0.0;
-                            let mut orient = String::new();
-                            let mut status = "PLACED".to_string();
-
-                            // Look for PLACED/FIXED in current line first
-                            for j in 3..comp_parts.len() {
-                                if (comp_parts[j] == "PLACED" || comp_parts[j] == "FIXED")
-                                    && j + 4 < comp_parts.len()
-                                    && comp_parts[j + 1] == "("
-                                    && comp_parts[j + 4] == ")"
-                                {
-                                    if let (Ok(px), Ok(py)) = (
-                                        comp_parts[j + 2].parse::<f64>(),
-                                        comp_parts[j + 3].parse::<f64>(),
-                                    ) {
-                                        x = px;
-                                        y = py;
-                                        status = comp_parts[j].to_string();
-                                        if j + 5 < comp_parts.len() {
-                                            orient =
-                                                comp_parts[j + 5].trim_end_matches(';').to_string();
-                                        }
-                                        break;
-                                    }
-                                }
+                    match multi_parser.parse_section(&lines, i, "END COMPONENTS") {
+                        Ok((parsed_components, next_index)) => {
+                            for component in parsed_components {
+                                let placement_info =
+                                    if let Some(ref placement) = component.placement {
+                                        format!(
+                                            "{} at ({:.1}, {:.1}) {}",
+                                            placement.placement_type,
+                                            placement.x,
+                                            placement.y,
+                                            placement.orientation
+                                        )
+                                    } else {
+                                        "no placement".to_string()
+                                    };
+                                println!(
+                                    "🔧     Component: {} ({}) {}",
+                                    component.name, component.macro_name, placement_info
+                                );
+                                components.push(component);
                             }
-
-                            // If not found in current line, look in next few lines
-                            if x == 0.0 && y == 0.0 {
-                                let mut comp_i = i + 1;
-                                while comp_i < lines.len() && comp_i < i + 20 {
-                                    // Limit search to 20 lines
-                                    let continuation_line = lines[comp_i].trim();
-
-                                    // Stop if we hit next component or END
-                                    if (continuation_line.starts_with('-')
-                                        && continuation_line.len() > 1)
-                                        || continuation_line.starts_with("END COMPONENTS")
-                                    {
-                                        break;
-                                    }
-
-                                    // Look for PLACED/FIXED coordinates
-                                    let cont_parts: Vec<&str> =
-                                        continuation_line.split_whitespace().collect();
-                                    for k in 0..cont_parts.len() {
-                                        if (cont_parts[k] == "PLACED" || cont_parts[k] == "FIXED")
-                                            && k + 4 < cont_parts.len()
-                                            && cont_parts[k + 1] == "("
-                                            && cont_parts[k + 4] == ")"
-                                        {
-                                            if let (Ok(px), Ok(py)) = (
-                                                cont_parts[k + 2].parse::<f64>(),
-                                                cont_parts[k + 3].parse::<f64>(),
-                                            ) {
-                                                x = px;
-                                                y = py;
-                                                status = cont_parts[k].to_string();
-                                                if k + 5 < cont_parts.len() {
-                                                    orient = cont_parts[k + 5]
-                                                        .trim_end_matches(';')
-                                                        .to_string();
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-
-                                    // If found, break
-                                    if x != 0.0 || y != 0.0 {
-                                        break;
-                                    }
-
-                                    comp_i += 1;
-                                }
-                            }
-
-                            println!(
-                                "🔧     Component: {} at ({:.1}, {:.1}) status={}",
-                                comp_id, x, y, status
-                            );
-
-                            components.push(crate::def::DefComponent {
-                                id: comp_id.clone(),
-                                name: comp_name,
-                                status,
-                                source: "USER".to_string(),
-                                orient,
-                                x,
-                                y,
-                            });
+                            i = next_index;
                         }
-                        i += 1;
+                        Err(e) => {
+                            println!("🔧   Error parsing COMPONENTS section: {}", e);
+                            // Fallback: skip to END COMPONENTS
+                            while i < lines.len() && !lines[i].trim().starts_with("END COMPONENTS")
+                            {
+                                i += 1;
+                            }
+                        }
                     }
                 }
             }
@@ -283,134 +212,32 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                     println!("🔧   Found PINS section with {} pins", num_pins);
                     i += 1;
 
-                    // Parse pins until END PINS
-                    while i < lines.len() {
-                        let pin_line = lines[i].trim();
-                        if pin_line.starts_with("END PINS") {
-                            break;
+                    // Use the new unified parsing framework
+                    let pin_parser = crate::def::parser::pin::DefPinParser::new();
+                    let multi_parser = crate::def::parser::MultiLineParser::new(pin_parser)
+                        .with_debug(true)
+                        .with_max_iterations(50000)
+                        .with_timeout(std::time::Duration::from_secs(120))
+                        .with_max_repeated_lines(10)
+                        .with_max_lines_per_item(200);
+
+                    match multi_parser.parse_section(&lines, i, "END PINS") {
+                        Ok((parsed_pins, next_index)) => {
+                            for pin in parsed_pins {
+                                println!(
+                                    "🔧     Pin: {} at ({:.1}, {:.1}) dir={} use={}",
+                                    pin.name, pin.x, pin.y, pin.direction, pin.use_type
+                                );
+                                pins.push(pin);
+                            }
+                            i = next_index;
                         }
-
-                        let pin_parts: Vec<&str> = pin_line.split_whitespace().collect();
-                        if pin_parts.len() >= 2 && pin_parts[0] == "-" {
-                            let pin_name = pin_parts[1].to_string();
-                            let mut net = "".to_string();
-                            let mut direction = "".to_string();
-                            let mut use_type = "".to_string();
-                            let mut x = 0.0;
-                            let mut y = 0.0;
-                            let mut orient = "".to_string();
-
-                            // Parse the initial pin definition line
-                            // Format: - pinName + NET netName + DIRECTION direction + USE useType
-                            for j in 2..pin_parts.len() {
-                                if pin_parts[j] == "NET" && j + 1 < pin_parts.len() {
-                                    net = pin_parts[j + 1].to_string();
-                                } else if pin_parts[j] == "DIRECTION" && j + 1 < pin_parts.len() {
-                                    direction = pin_parts[j + 1].to_string();
-                                } else if pin_parts[j] == "USE" && j + 1 < pin_parts.len() {
-                                    use_type = pin_parts[j + 1].to_string();
-                                }
+                        Err(e) => {
+                            println!("🔧   Error parsing PINS section: {}", e);
+                            // Fallback: skip to END PINS
+                            while i < lines.len() && !lines[i].trim().starts_with("END PINS") {
+                                i += 1;
                             }
-
-                            // Parse continuation lines for PLACED coordinates
-                            let mut pin_i = i + 1;
-                            while pin_i < lines.len() {
-                                let continuation_line = lines[pin_i].trim();
-
-                                // Check if we reached the end of this pin (semicolon or next pin)
-                                if continuation_line.contains(';')
-                                    || (continuation_line.starts_with('-')
-                                        && continuation_line.len() > 1)
-                                    || continuation_line.starts_with("END PINS")
-                                {
-                                    // Parse PLACED coordinates from this line if it contains them
-                                    let cont_parts: Vec<&str> =
-                                        continuation_line.split_whitespace().collect();
-                                    for k in 0..cont_parts.len() {
-                                        if cont_parts[k] == "PLACED"
-                                            && k + 4 < cont_parts.len()
-                                            && cont_parts[k + 1] == "("
-                                            && cont_parts[k + 4] == ")"
-                                        {
-                                            if let (Ok(px), Ok(py)) = (
-                                                cont_parts[k + 2].parse::<f64>(),
-                                                cont_parts[k + 3].parse::<f64>(),
-                                            ) {
-                                                x = px;
-                                                y = py;
-                                                if k + 5 < cont_parts.len() {
-                                                    orient = cont_parts[k + 5]
-                                                        .trim_end_matches(';')
-                                                        .to_string();
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-
-                                    // If this line ends with semicolon, we're done with this pin
-                                    if continuation_line.contains(';') {
-                                        break;
-                                    }
-
-                                    // If we hit next pin or END, backtrack
-                                    if continuation_line.starts_with('-')
-                                        || continuation_line.starts_with("END PINS")
-                                    {
-                                        pin_i -= 1; // Backtrack so main loop processes this line
-                                        break;
-                                    }
-                                } else {
-                                    // Check for PLACED in continuation lines
-                                    let cont_parts: Vec<&str> =
-                                        continuation_line.split_whitespace().collect();
-                                    for k in 0..cont_parts.len() {
-                                        if cont_parts[k] == "PLACED"
-                                            && k + 4 < cont_parts.len()
-                                            && cont_parts[k + 1] == "("
-                                            && cont_parts[k + 4] == ")"
-                                        {
-                                            if let (Ok(px), Ok(py)) = (
-                                                cont_parts[k + 2].parse::<f64>(),
-                                                cont_parts[k + 3].parse::<f64>(),
-                                            ) {
-                                                x = px;
-                                                y = py;
-                                                if k + 5 < cont_parts.len() {
-                                                    orient = cont_parts[k + 5]
-                                                        .trim_end_matches(';')
-                                                        .to_string();
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                pin_i += 1;
-                            }
-
-                            // Update main loop index
-                            i = pin_i;
-
-                            println!(
-                                "🔧     Pin: {} at ({:.1}, {:.1}) dir={} use={}",
-                                pin_name, x, y, direction, use_type
-                            );
-
-                            pins.push(crate::def::DefPin {
-                                name: pin_name.clone(),
-                                net,
-                                use_type,
-                                status: "PLACED".to_string(),
-                                direction,
-                                orient,
-                                x,
-                                y,
-                                rects: Vec::new(),
-                                ports: Vec::new(),
-                            });
-                        } else {
-                            i += 1;
                         }
                     }
                 }
@@ -420,100 +247,33 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                     println!("🔧   Found NETS section with {} nets", num_nets);
                     i += 1;
 
-                    // Parse nets until END NETS
-                    while i < lines.len() {
-                        let net_line = lines[i].trim();
-                        if net_line.starts_with("END NETS") {
-                            break;
-                        }
+                    // Use the new unified parsing framework
+                    let net_parser = crate::def::parser::net::DefNetParser::new();
+                    let multi_parser = crate::def::parser::MultiLineParser::new(net_parser)
+                        .with_debug(true)
+                        .with_max_iterations(50000)
+                        .with_timeout(std::time::Duration::from_secs(120))
+                        .with_max_repeated_lines(10)
+                        .with_max_lines_per_item(1000);
 
-                        let net_parts: Vec<&str> = net_line.split_whitespace().collect();
-                        if net_parts.len() >= 2 && net_parts[0] == "-" {
-                            // Net line: - netName ( compName pinName ) ...
-                            let net_name = net_parts[1].to_string();
-                            let mut instances = Vec::new();
-                            let mut pins = Vec::new();
-
-                            // Parse the initial net definition line
-                            let mut j = 2;
-                            while j < net_parts.len() {
-                                if net_parts[j] == "("
-                                    && j + 2 < net_parts.len()
-                                    && net_parts[j + 3] == ")"
-                                {
-                                    // Found (compName pinName) pattern
-                                    let comp_name = net_parts[j + 1].to_string();
-                                    let pin_name = net_parts[j + 2].to_string();
-                                    if comp_name == "PIN" {
-                                        pins.push(pin_name);
-                                    } else {
-                                        instances.push(format!("{}:{}", comp_name, pin_name));
-                                    }
-                                    j += 4; // Move past ( compName pinName )
-                                } else {
-                                    j += 1;
-                                }
+                    match multi_parser.parse_section(&lines, i, "END NETS") {
+                        Ok((parsed_nets, next_index)) => {
+                            for net in parsed_nets {
+                                println!(
+                                    "🔧     Net: {} with {} instances, {} pins",
+                                    net.name, net.connections, net.pins
+                                );
+                                nets.push(net);
                             }
-
-                            // Parse continuation lines until semicolon or next net
-                            let mut net_i = i + 1;
-                            while net_i < lines.len() && net_i < i + 50 {
-                                // Limit search
-                                let continuation_line = lines[net_i].trim();
-
-                                // Stop if we hit next net or END
-                                if (continuation_line.starts_with('-')
-                                    && continuation_line.len() > 1)
-                                    || continuation_line.starts_with("END NETS")
-                                {
-                                    break;
-                                }
-
-                                // Parse ( compName pinName ) patterns in continuation lines
-                                let cont_parts: Vec<&str> =
-                                    continuation_line.split_whitespace().collect();
-                                let mut k = 0;
-                                while k < cont_parts.len() {
-                                    if cont_parts[k] == "("
-                                        && k + 2 < cont_parts.len()
-                                        && k + 3 < cont_parts.len()
-                                        && cont_parts[k + 3] == ")"
-                                    {
-                                        let comp_name = cont_parts[k + 1].to_string();
-                                        let pin_name = cont_parts[k + 2].to_string();
-                                        if comp_name == "PIN" {
-                                            pins.push(pin_name);
-                                        } else {
-                                            instances.push(format!("{}:{}", comp_name, pin_name));
-                                        }
-                                        k += 4;
-                                    } else {
-                                        k += 1;
-                                    }
-                                }
-
-                                // If this line contains semicolon, we're done
-                                if continuation_line.contains(';') {
-                                    break;
-                                }
-
-                                net_i += 1;
-                            }
-
-                            println!(
-                                "🔧     Net: {} with {} instances, {} pins",
-                                net_name,
-                                instances.len(),
-                                pins.len()
-                            );
-
-                            nets.push(crate::def::DefNet {
-                                name: net_name,
-                                instances,
-                                pins,
-                            });
+                            i = next_index;
                         }
-                        i += 1;
+                        Err(e) => {
+                            println!("🔧   Error parsing NETS section: {}", e);
+                            // Fallback: skip to END NETS
+                            while i < lines.len() && !lines[i].trim().starts_with("END NETS") {
+                                i += 1;
+                            }
+                        }
                     }
                 }
             }
@@ -728,6 +488,11 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                             vias.push(DefVia {
                                 name: via_name,
                                 layers,
+                                via_rule: None,
+                                cut_size: None,
+                                cut_spacing: None,
+                                enclosure: Vec::new(),
+                                pattern: String::new(),
                             });
                             continue; // Don't increment i again
                         }

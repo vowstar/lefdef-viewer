@@ -3,12 +3,12 @@
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until, take_while1},
-    character::complete::{char, multispace0, space1},
-    combinator::opt,
+    bytes::complete::{tag, take_until},
+    character::complete::{alpha1, alphanumeric1, char, multispace0, space0, space1},
+    combinator::recognize,
     multi::many0,
     number::complete::double,
-    sequence::{delimited, preceded, terminated, tuple},
+    sequence::{delimited, pair},
     IResult,
 };
 
@@ -16,23 +16,23 @@ use super::{Lef, LefMacro, LefObstruction, LefPin, LefPolygon, LefPort, LefRect}
 
 fn calculate_polygon_winding(points: &[(f64, f64)]) -> bool {
     if points.len() < 3 {
-        return true; // degenerate → treat as CW / additive
+        return false;
     }
-    let mut area = 0.0;
+
+    let mut sum = 0.0;
     for i in 0..points.len() {
-        let (x0, y0) = points[i];
-        let (x1, y1) = points[(i + 1) % points.len()];
-        area += x0 * y1 - x1 * y0; // standard shoelace term
+        let j = (i + 1) % points.len();
+        sum += (points[j].0 - points[i].0) * (points[j].1 + points[i].1);
     }
-    // In LEF the Y-axis is "up", so the sign is identical to maths:
-    //   area < 0 → clockwise
-    area < 0.0
+
+    sum > 0.0 // clockwise (hole) if positive, counterclockwise (solid) if negative
 }
 
 fn identifier(input: &str) -> IResult<&str, &str> {
-    take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '.' || c == '/' || c == '-')(
-        input,
-    )
+    recognize(pair(
+        alt((alpha1, tag("_"))),
+        many0(alt((alphanumeric1, tag("_")))),
+    ))(input)
 }
 
 fn string_literal(input: &str) -> IResult<&str, &str> {
@@ -45,17 +45,17 @@ fn string_literal(input: &str) -> IResult<&str, &str> {
 fn parse_rect(input: &str) -> IResult<&str, LefRect> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("LAYER")(input)?;
-    let (input, _) = space1(input)?;
+    let (input, _) = space0(input)?;
     let (input, layer) = identifier(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("RECT")(input)?;
-    let (input, _) = space1(input)?;
+    let (input, _) = space0(input)?;
     let (input, xl) = double(input)?;
-    let (input, _) = space1(input)?;
+    let (input, _) = space0(input)?;
     let (input, yl) = double(input)?;
-    let (input, _) = space1(input)?;
+    let (input, _) = space0(input)?;
     let (input, xh) = double(input)?;
-    let (input, _) = space1(input)?;
+    let (input, _) = space0(input)?;
     let (input, yh) = double(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag(";")(input)?;
@@ -75,6 +75,7 @@ fn parse_rect(input: &str) -> IResult<&str, LefRect> {
 fn parse_polygon(input: &str) -> IResult<&str, LefPolygon> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("LAYER")(input)?;
+    let (input, _) = space0(input)?;
     let (input, _) = space1(input)?;
     let (input, layer) = identifier(input)?;
     let (input, _) = multispace0(input)?;
@@ -122,57 +123,17 @@ fn parse_polygon(input: &str) -> IResult<&str, LefPolygon> {
     )))
 }
 
-fn parse_port(input: &str) -> IResult<&str, LefPort> {
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag("PORT")(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, rects) = many0(parse_rect)(input)?;
-    let (input, polygons) = many0(parse_polygon)(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag("END")(input)?;
-
-    Ok((input, LefPort { rects, polygons }))
+// Similar to parse_pin, this is handled manually in parse_simple_macro
+fn parse_port(_input: &str) -> IResult<&str, LefPort> {
+    unimplemented!("PORT parsing is handled by parse_simple_macro")
 }
 
-fn parse_pin(input: &str) -> IResult<&str, LefPin> {
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag("PIN")(input)?;
-    let (input, _) = space1(input)?;
-    let (input, name) = identifier(input)?;
-    let (input, _) = multispace0(input)?;
-
-    let (input, direction) = opt(preceded(
-        tuple((tag("DIRECTION"), space1)),
-        terminated(identifier, multispace0),
-    ))(input)?;
-
-    let (input, use_type) = opt(preceded(
-        tuple((tag("USE"), space1)),
-        terminated(identifier, multispace0),
-    ))(input)?;
-
-    let (input, shape) = opt(preceded(
-        tuple((tag("SHAPE"), space1)),
-        terminated(identifier, multispace0),
-    ))(input)?;
-
-    let (input, ports) = many0(parse_port)(input)?;
-
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag("END")(input)?;
-    let (input, _) = space1(input)?;
-    let (input, _) = tag(name)(input)?;
-
-    Ok((
-        input,
-        LefPin {
-            name: name.to_string(),
-            direction: direction.unwrap_or("").to_string(),
-            use_type: use_type.unwrap_or("").to_string(),
-            shape: shape.unwrap_or("").to_string(),
-            ports,
-        },
-    ))
+// This parser is used for the parts that the manual parser doesn't handle
+// But our manual parser already handles the full PIN parsing, so this is mainly a stub
+fn parse_pin(_input: &str) -> IResult<&str, LefPin> {
+    // This function is not actually used since parse_simple_macro handles all PIN parsing manually
+    // Keeping it as a stub to satisfy the interface
+    unimplemented!("PIN parsing is handled by parse_simple_macro")
 }
 
 fn parse_obstruction(input: &str) -> IResult<&str, LefObstruction> {
@@ -239,17 +200,18 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                     LefMacro {
                         name: name.to_string(),
                         class,
-                        source,
-                        site_name,
-                        origin_x,
-                        origin_y,
+                        foreign: foreign_name,
+                        origin: (origin_x, origin_y),
                         size_x,
                         size_y,
-                        foreign_name,
-                        foreign_x,
-                        foreign_y,
+                        symmetry: Vec::new(),
+                        site: site_name,
                         pins,
-                        obstruction,
+                        obs: if let Some(obs) = obstruction {
+                            vec![obs]
+                        } else {
+                            vec![]
+                        },
                     },
                 ));
             }

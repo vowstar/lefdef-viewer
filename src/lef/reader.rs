@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::{parser::parse_lef, Lef};
+use super::Lef;
 
 pub struct LefReader;
 
@@ -27,22 +27,36 @@ impl LefReader {
             println!("  {}: {}", i + 1, line);
         }
 
-        match parse_lef(&content) {
-            Ok((remaining, lef)) => {
+        // Use proven nom-based parser
+        println!("🔧 Using proven nom-based LEF parser...");
+        match super::lef_parser::parse_lef(&content) {
+            Ok((_, lef)) => {
                 println!("✅ LEF parsed successfully!");
-                println!("📊 Found {} macros", lef.macros.len());
-                for (i, macro_def) in lef.macros.iter().enumerate().take(5) {
-                    println!(
-                        "  Macro {}: {} (size: {:.3}x{:.3})",
-                        i + 1,
-                        macro_def.name,
-                        macro_def.size_x,
-                        macro_def.size_y
-                    );
+                println!(
+                    "📊 Found {} macros with complete PIN geometry data",
+                    lef.macros.len()
+                );
+
+                // Detailed statistics
+                let mut total_pins = 0;
+                let mut total_rects = 0;
+                let mut total_polygons = 0;
+
+                for macro_def in &lef.macros {
+                    total_pins += macro_def.pins.len();
+                    for pin in &macro_def.pins {
+                        for port in &pin.ports {
+                            total_rects += port.rects.len();
+                            total_polygons += port.polygons.len();
+                        }
+                    }
                 }
-                if !remaining.trim().is_empty() {
-                    println!("⚠️  Unparsed content remaining: {} chars", remaining.len());
-                }
+
+                println!(
+                    "🔧 Statistics: {} pins, {} rects, {} polygons",
+                    total_pins, total_rects, total_polygons
+                );
+
                 Ok(lef)
             }
             Err(e) => {

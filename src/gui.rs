@@ -79,7 +79,7 @@ impl LefDefViewer {
                 layers
             },
             all_layers: std::collections::HashSet::new(),
-            show_layers_panel: false,
+            show_layers_panel: true,
             show_pin_text: true,
             fit_to_view_requested: false,
             // DEF related selection states
@@ -521,8 +521,8 @@ impl LefDefViewer {
                 }
 
                 let mut macro_has_content = false;
-                let macro_x = macro_def.origin_x as f32;
-                let macro_y = macro_def.origin_y as f32;
+                let macro_x = macro_def.origin.0 as f32;
+                let macro_y = macro_def.origin.1 as f32;
 
                 // Include macro size bounds
                 let left = macro_x;
@@ -576,7 +576,7 @@ impl LefDefViewer {
                 }
 
                 // Include obstruction shapes in bounds calculation
-                if let Some(obs) = &macro_def.obstruction {
+                for obs in &macro_def.obs {
                     // Include obstruction rectangles
                     for rect in &obs.rects {
                         let detailed_layer = format!("{}.OBS", rect.layer);
@@ -654,8 +654,8 @@ impl LefDefViewer {
 
                 // Only use macro size bounds (OUTLINE)
                 if self.visible_layers.contains("OUTLINE") {
-                    let macro_x = macro_def.origin_x as f32;
-                    let macro_y = macro_def.origin_y as f32;
+                    let macro_x = macro_def.origin.0 as f32;
+                    let macro_y = macro_def.origin.1 as f32;
                     let left = macro_x;
                     let bottom = macro_y;
                     let right = left + macro_def.size_x as f32;
@@ -753,7 +753,7 @@ impl LefDefViewer {
                             }
                         }
                     }
-                    if let Some(obs) = &macro_def.obstruction {
+                    for obs in &macro_def.obs {
                         for rect in &obs.rects {
                             let detailed_layer = format!("{}.OBS", rect.layer);
                             self.all_layers.insert(detailed_layer.clone());
@@ -771,7 +771,7 @@ impl LefDefViewer {
                 let mut obs_count = 0;
                 let mut obs_macros = Vec::new();
                 for macro_def in &lef.macros {
-                    if let Some(obs) = &macro_def.obstruction {
+                    for obs in &macro_def.obs {
                         obs_count += obs.rects.len() + obs.polygons.len();
                         obs_macros.push(&macro_def.name);
                     }
@@ -801,6 +801,8 @@ impl LefDefViewer {
                 self.lef_data = Some(lef);
                 self.lef_file_path = Some(path);
                 self.error_message = None;
+                // Auto-show layers panel when LEF file is loaded successfully
+                self.show_layers_panel = true;
             }
             Err(e) => {
                 self.error_message = Some(format!("Failed to load LEF file: {}", e));
@@ -994,7 +996,7 @@ impl LefDefViewer {
                                     macro_def.size_x, macro_def.size_y
                                 ));
                                 ui.label(format!("Pins: {}", macro_def.pins.len()));
-                                if let Some(obs) = &macro_def.obstruction {
+                                for obs in &macro_def.obs {
                                     ui.label(format!("Obstructions: {}", obs.rects.len()));
                                 }
                             });
@@ -1117,7 +1119,7 @@ impl LefDefViewer {
                             ui.horizontal(|ui| {
                                 if ui.button("Select All").clicked() {
                                     for component in &def.components {
-                                        self.selected_components.insert(component.id.clone());
+                                        self.selected_components.insert(component.name.clone());
                                     }
                                 }
                                 if ui.button("Clear Selection").clicked() {
@@ -1131,25 +1133,35 @@ impl LefDefViewer {
                                 .show(ui, |ui| {
                                     for component in &def.components {
                                         let mut is_selected =
-                                            self.selected_components.contains(&component.id);
-                                        let response = ui.checkbox(&mut is_selected, &component.id);
+                                            self.selected_components.contains(&component.name);
+                                        let response =
+                                            ui.checkbox(&mut is_selected, &component.name);
                                         if response.clicked() {
                                             if is_selected {
                                                 self.selected_components
-                                                    .insert(component.id.clone());
+                                                    .insert(component.name.clone());
                                             } else {
-                                                self.selected_components.remove(&component.id);
+                                                self.selected_components.remove(&component.name);
                                             }
                                         }
 
                                         // Show component details on hover
                                         if response.hovered() {
+                                            let placement_info = if let Some(ref placement) =
+                                                component.placement
+                                            {
+                                                format!(
+                                                    "PLACED at ({:.1}, {:.1}) {}",
+                                                    placement.x, placement.y, placement.orientation
+                                                )
+                                            } else {
+                                                "no placement".to_string()
+                                            };
                                             response.on_hover_text(format!(
-                                                "  {} at ({:.1}, {:.1}) {}",
+                                                "  {} ({}): {}",
                                                 component.name,
-                                                component.x,
-                                                component.y,
-                                                component.orient
+                                                component.macro_name,
+                                                placement_info
                                             ));
                                         }
                                     }
@@ -1254,7 +1266,7 @@ impl LefDefViewer {
                                             response.on_hover_text(format!(
                                                 "  {} instances, {} pins",
                                                 net.instances.len(),
-                                                net.pins.len()
+                                                net.pins
                                             ));
                                         }
                                     }
@@ -1332,8 +1344,8 @@ impl LefDefViewer {
                     continue;
                 }
 
-                let x = center.x + self.pan_x + (macro_def.origin_x as f32 * self.zoom);
-                let y = center.y + self.pan_y + (macro_def.origin_y as f32 * self.zoom);
+                let x = center.x + self.pan_x + (macro_def.origin.0 as f32 * self.zoom);
+                let y = center.y + self.pan_y + (macro_def.origin.1 as f32 * self.zoom);
                 let w = macro_def.size_x as f32 * self.zoom;
                 let h = macro_def.size_y as f32 * self.zoom;
 
@@ -1509,7 +1521,7 @@ impl LefDefViewer {
                 }
 
                 // Render obstructions
-                if let Some(obs) = &macro_def.obstruction {
+                for obs in &macro_def.obs {
                     // Render obstruction rectangles
                     for rect_data in &obs.rects {
                         let detailed_layer = format!("{}.OBS", rect_data.layer);
@@ -1780,13 +1792,21 @@ impl LefDefViewer {
                 for component in &def.components {
                     // Only draw if this component is selected (or all if none are selected)
                     if !self.selected_components.is_empty()
-                        && !self.selected_components.contains(&component.id)
+                        && !self.selected_components.contains(&component.name)
                     {
                         continue;
                     }
 
-                    let comp_x = center.x + self.pan_x + (component.x as f32 * self.zoom * 0.001);
-                    let comp_y = center.y + self.pan_y + (component.y as f32 * self.zoom * 0.001);
+                    // Get component position from placement info
+                    let (comp_x, comp_y) = if let Some(ref placement) = component.placement {
+                        (
+                            center.x + self.pan_x + (placement.x as f32 * self.zoom * 0.001),
+                            center.y + self.pan_y + (placement.y as f32 * self.zoom * 0.001),
+                        )
+                    } else {
+                        // Default position if no placement info
+                        (center.x, center.y)
+                    };
 
                     // Draw a small rectangle for each component
                     let comp_size = 5.0 * self.zoom;
@@ -1796,7 +1816,7 @@ impl LefDefViewer {
                     );
 
                     // Use different colors based on selection
-                    let is_selected = self.selected_components.contains(&component.id);
+                    let is_selected = self.selected_components.contains(&component.name);
                     let fill_color = if is_selected {
                         egui::Color32::from_rgb(0, 255, 150) // Brighter green for selected
                     } else {
@@ -1815,7 +1835,7 @@ impl LefDefViewer {
                     if self.zoom > 2.0 {
                         texts_to_render.push((
                             egui::pos2(comp_x, comp_y - comp_size - 10.0),
-                            component.id.clone(),
+                            component.name.clone(),
                             egui::FontId::monospace(8.0),
                             egui::Color32::YELLOW,
                         ));
@@ -2351,22 +2371,17 @@ impl eframe::App for LefDefViewer {
                                 for macro_def in &lef.macros {
                                     ui.collapsing(&macro_def.name, |ui| {
                                         ui.monospace(format!("Class: {}", macro_def.class));
-                                        ui.monospace(format!("Source: {}", macro_def.source));
-                                        ui.monospace(format!("Site: {}", macro_def.site_name));
+                                        ui.monospace(format!("Source: {}", macro_def.foreign));
+                                        ui.monospace(format!("Site: {}", macro_def.site));
                                         ui.monospace(format!(
                                             "Origin: ({:.3}, {:.3})",
-                                            macro_def.origin_x, macro_def.origin_y
+                                            macro_def.origin.0, macro_def.origin.1
                                         ));
                                         ui.monospace(format!(
                                             "Size: {:.3} x {:.3}",
                                             macro_def.size_x, macro_def.size_y
                                         ));
-                                        ui.monospace(format!(
-                                            "Foreign: {} ({:.3}, {:.3})",
-                                            macro_def.foreign_name,
-                                            macro_def.foreign_x,
-                                            macro_def.foreign_y
-                                        ));
+                                        ui.monospace(format!("Foreign: {}", macro_def.foreign));
                                         ui.monospace(format!("Pins: {}", macro_def.pins.len()));
                                     });
                                 }
