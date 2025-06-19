@@ -15,8 +15,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [stable]
+        include:
+          - os: ubuntu-latest
+            rust: stable
+            target: x86_64-unknown-linux-musl
+          - os: windows-latest
+            rust: stable
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            rust: stable
+            target: x86_64-apple-darwin
 
     steps:
     - uses: actions/checkout@v4
@@ -26,7 +34,14 @@ jobs:
       with:
         profile: minimal
         toolchain: ${{ matrix.rust }}
+        target: ${{ matrix.target }}
         override: true
+
+    - name: Install musl tools (Linux musl)
+      if: matrix.target == 'x86_64-unknown-linux-musl'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y musl-tools
 
     - name: Cache dependencies
       uses: actions/cache@v4
@@ -35,16 +50,16 @@ jobs:
           ~/.cargo/registry
           ~/.cargo/git
           target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Build
       uses: actions-rs/cargo@v1
       with:
         command: build
-        args: --verbose
+        args: --verbose --target ${{ matrix.target }}
 
     - name: Run tests
       uses: actions-rs/cargo@v1
       with:
         command: test
-        args: --verbose
+        args: --verbose --target ${{ matrix.target }}

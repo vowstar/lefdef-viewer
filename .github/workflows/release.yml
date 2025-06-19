@@ -17,13 +17,16 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact_name: lefdef-viewer
-            asset_name: lefdef-viewer-linux-amd64
+            asset_name: lefdef-viewer-linux-musl-amd64
+            target: x86_64-unknown-linux-musl
           - os: windows-latest
             artifact_name: lefdef-viewer.exe
             asset_name: lefdef-viewer-windows-amd64.exe
+            target: x86_64-pc-windows-msvc
           - os: macos-latest
             artifact_name: lefdef-viewer
             asset_name: lefdef-viewer-macos-amd64
+            target: x86_64-apple-darwin
 
     steps:
       - uses: actions/checkout@v4
@@ -34,18 +37,25 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+          target: ${{ matrix.target }}
+
+      - name: Install musl tools (Linux musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
 
       - name: Build
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --verbose
+          args: --release --verbose --target ${{ matrix.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
-          path: target/release/${{ matrix.artifact_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
           if-no-files-found: error
 
   release:
@@ -72,14 +82,14 @@ jobs:
         with:
           path: artifacts
 
-      - name: Upload Linux Asset
+      - name: Upload Linux MUSL Asset
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/lefdef-viewer-linux-amd64/lefdef-viewer
-          asset_name: lefdef-viewer-linux-amd64
+          asset_path: ./artifacts/lefdef-viewer-linux-musl-amd64/lefdef-viewer
+          asset_name: lefdef-viewer-linux-musl-amd64
           asset_content_type: application/octet-stream
 
       - name: Upload Windows Asset

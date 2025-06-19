@@ -8,7 +8,7 @@ This directory contains GitHub Actions workflows for the lefdef-viewer project.
 
 The CI workflow runs on every push to the main branch and on pull requests. It performs the following tasks:
 
-- Builds the project on Ubuntu, Windows, and macOS
+- Builds the project on Ubuntu (with musl for static linking), Windows, and macOS
 - Runs all tests
 - Caches dependencies to speed up future builds
 
@@ -16,15 +16,18 @@ The CI workflow runs on every push to the main branch and on pull requests. It p
 
 The Lint workflow runs on every push to the main branch and on pull requests. It performs the following tasks:
 
-- Runs `cargo check` to verify that the code compiles
+- Runs `cargo check` to verify that the code compiles (with musl target)
 - Runs `cargo fmt` to check code formatting
-- Runs `cargo clippy` to check for common mistakes and improve code quality
+- Runs `cargo clippy` to check for common mistakes and improve code quality (with musl target)
 
 ### Release Workflow (`release.yml`)
 
 The Release workflow runs when a tag with the format `v*.*.*` is pushed. It performs the following tasks:
 
-- Builds release binaries for Ubuntu, Windows, and macOS
+- Builds release binaries for:
+  - Ubuntu (static musl build for portable deployment)
+  - Windows
+  - macOS
 - Creates a GitHub release
 - Uploads the binaries as assets to the release
 
@@ -50,14 +53,19 @@ This will trigger the Release workflow, which will create a GitHub release with 
 Before pushing changes, you can run the same checks locally that the CI and Lint workflows run:
 
 ```bash
+# For musl target (Linux)
+rustup target add x86_64-unknown-linux-musl
+sudo apt-get install musl-tools  # On Debian/Ubuntu
+
 # Build and run tests
-cargo test
+cargo build --target x86_64-unknown-linux-musl
+cargo test --target x86_64-unknown-linux-musl
 
 # Check code formatting
 cargo fmt -- --check
 
 # Run clippy
-cargo clippy -- -D warnings
+cargo clippy --target x86_64-unknown-linux-musl -- -D warnings
 ```
 
 ## Workflow Status

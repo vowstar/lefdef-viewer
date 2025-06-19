@@ -12,6 +12,7 @@ A Rust-based LEF (Library Exchange Format) and DEF (Design Exchange Format) file
 - **Interactive GUI**: Modern interface with file browsing, zoom/pan controls, and detailed data inspection
 - **Real-time Visualization**: Dynamic rendering of layout elements with proper scaling and positioning
 - **Cross-platform**: Built with Rust and egui for Windows, macOS, and Linux support
+- **Static Binary**: Linux version available with musl static linking for portable deployment
 
 ## Installation
 
@@ -26,6 +27,23 @@ git clone <repository-url>
 cd lefdef-viewer
 cargo build --release
 ```
+
+### Building Static Binary (Linux)
+
+For a fully static binary on Linux that doesn't depend on system libraries:
+
+```bash
+# Install musl target
+rustup target add x86_64-unknown-linux-musl
+
+# Install musl tools (on Debian/Ubuntu)
+sudo apt-get install musl-tools
+
+# Build with musl target
+cargo build --release --target x86_64-unknown-linux-musl
+```
+
+The resulting binary will be at `target/x86_64-unknown-linux-musl/release/lefdef-viewer`.
 
 ### Running
 
