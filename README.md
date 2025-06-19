@@ -1,5 +1,8 @@
 # LEF/DEF Viewer (Rust)
 
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/vowstar/lefdef-viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/vowstar/lefdef-viewer/actions/workflows/ci.yml)
+
 A Rust-based LEF (Library Exchange Format) and DEF (Design Exchange Format) file viewer with a modern GUI built using egui.
 
 ## Features
