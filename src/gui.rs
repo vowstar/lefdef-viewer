@@ -870,6 +870,74 @@ impl LefDefViewer {
         }
     }
 
+    fn handle_export_selected_cells_pinlist(&mut self) {
+        if let Some(lef_data) = &self.lef_data {
+            if self.selected_cells.is_empty() {
+                self.error_message = Some("No cells selected for export".to_string());
+                return;
+            }
+
+            // Get selected macros
+            let selected_macros: Vec<&crate::lef::LefMacro> = lef_data
+                .macros
+                .iter()
+                .filter(|macro_def| self.selected_cells.contains(&macro_def.name))
+                .collect();
+
+            if selected_macros.is_empty() {
+                self.error_message = Some("Selected cells not found in LEF data".to_string());
+                return;
+            }
+
+            if selected_macros.len() == 1 {
+                // Single cell export - file save dialog
+                let macro_def = selected_macros[0];
+                let default_filename = format!("{}.csv", macro_def.name);
+
+                if let Some(file_path) = FileDialog::new()
+                    .set_file_name(&default_filename)
+                    .add_filter("CSV files", &["csv"])
+                    .save_file()
+                {
+                    match export::export_cell_pinlist_to_csv(
+                        macro_def,
+                        &file_path.to_string_lossy(),
+                    ) {
+                        Ok(()) => {
+                            self.success_message = Some(format!(
+                                "Successfully exported pinlist for cell '{}' to: {}",
+                                macro_def.name,
+                                file_path.display()
+                            ));
+                        }
+                        Err(e) => {
+                            self.error_message = Some(format!("Failed to export pinlist: {}", e));
+                        }
+                    }
+                }
+            } else {
+                // Multiple cells export - directory picker
+                if let Some(output_dir) = FileDialog::new().pick_folder() {
+                    match export::export_multiple_cells_pinlist(
+                        &selected_macros,
+                        &output_dir.to_string_lossy(),
+                    ) {
+                        Ok(()) => {
+                            self.success_message = Some(format!(
+                                "Successfully exported pinlists for {} cells to directory: {}",
+                                selected_macros.len(),
+                                output_dir.display()
+                            ));
+                        }
+                        Err(e) => {
+                            self.error_message = Some(format!("Failed to export pinlists: {}", e));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn render_menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
@@ -903,6 +971,17 @@ impl LefDefViewer {
                     .clicked()
                 {
                     self.handle_export_lef_csv();
+                    ui.close_menu();
+                }
+
+                if ui
+                    .add_enabled(
+                        self.lef_data.is_some() && !self.selected_cells.is_empty(),
+                        egui::Button::new("Export Selected Cells Pinlist"),
+                    )
+                    .clicked()
+                {
+                    self.handle_export_selected_cells_pinlist();
                     ui.close_menu();
                 }
 
