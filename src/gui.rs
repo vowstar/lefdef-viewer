@@ -1103,7 +1103,11 @@ impl LefDefViewer {
                                                     }
                                                 }
 
-                                                for (layer, (rect_count, poly_count)) in obs_by_layer {
+                                                // Sort layers by name to ensure stable order
+                                                let mut sorted_obs_layers: Vec<_> = obs_by_layer.into_iter().collect();
+                                                sorted_obs_layers.sort_by(|a, b| a.0.cmp(&b.0));
+
+                                                for (layer, (rect_count, poly_count)) in sorted_obs_layers {
                                                     let obs_id = format!("{}::{}", macro_def.name, layer);
                                                     let mut is_selected = self.selected_lef_obs.contains(&obs_id);
 
