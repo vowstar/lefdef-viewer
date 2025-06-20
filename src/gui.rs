@@ -966,12 +966,12 @@ impl LefDefViewer {
             // Zoom controls
             ui.horizontal(|ui| {
                 ui.label("Zoom:");
-                if ui.button("−").clicked() {
+                if ui.button("-").clicked() {
                     self.zoom = (self.zoom * 0.8).max(0.01);
                 }
-                ui.add(egui::Slider::new(&mut self.zoom, 0.01..=20.0).logarithmic(true));
+                ui.add(egui::Slider::new(&mut self.zoom, 0.01..=1000.0).logarithmic(true));
                 if ui.button("+").clicked() {
-                    self.zoom = (self.zoom * 1.25).min(20.0);
+                    self.zoom = (self.zoom * 1.25).min(1000.0);
                 }
             });
 
@@ -1336,7 +1336,7 @@ impl LefDefViewer {
                 let world_y = (hover_pos.y - center.y - self.pan_y) / old_zoom;
 
                 // Update zoom
-                self.zoom = (self.zoom * zoom_factor).clamp(0.01, 20.0);
+                self.zoom = (self.zoom * zoom_factor).clamp(0.01, 1000.0);
 
                 // Adjust pan so that the world point under mouse stays at the same screen position
                 self.pan_x = hover_pos.x - center.x - (world_x * self.zoom);
@@ -1531,7 +1531,7 @@ impl LefDefViewer {
 
                     // Add PIN text once per pin if LABEL layer is visible, zoom is high enough, and pin has visible shapes
                     if self.visible_layers.contains("LABEL")
-                        && self.zoom > 0.5
+                        && self.zoom > 0.2
                         && has_visible_shapes
                     {
                         if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
@@ -1540,7 +1540,7 @@ impl LefDefViewer {
                             texts_to_render.push((
                                 pin_center,
                                 pin.name.clone(),
-                                egui::FontId::monospace(8.0),
+                                egui::FontId::monospace(12.0),
                                 egui::Color32::WHITE,
                             ));
                         }
