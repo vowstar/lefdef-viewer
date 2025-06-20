@@ -3,7 +3,7 @@
 
 [package]
 name = "lefdef-viewer"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Huang Rui <vowstar@gmail.com>"]
 description = "A Rust-based LEF/DEF file viewer with GUI"
