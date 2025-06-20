@@ -747,12 +747,26 @@ impl LefDefViewer {
                             for rect in &port.rects {
                                 let detailed_layer = format!("{}.PIN", rect.layer);
                                 self.all_layers.insert(detailed_layer.clone());
-                                self.visible_layers.insert(detailed_layer);
+                                // Make power/ground pins visible by default
+                                if pin.use_type == "POWER" || pin.use_type == "GROUND" {
+                                    self.visible_layers.insert(detailed_layer);
+                                    println!("DEBUG: Auto-enabled power layer: {}.PIN for pin {} (USE: {})",
+                                           rect.layer, pin.name, pin.use_type);
+                                } else {
+                                    self.visible_layers.insert(detailed_layer);
+                                }
                             }
                             for polygon in &port.polygons {
                                 let detailed_layer = format!("{}.PIN", polygon.layer);
                                 self.all_layers.insert(detailed_layer.clone());
-                                self.visible_layers.insert(detailed_layer);
+                                // Make power/ground pins visible by default
+                                if pin.use_type == "POWER" || pin.use_type == "GROUND" {
+                                    self.visible_layers.insert(detailed_layer);
+                                    println!("DEBUG: Auto-enabled power layer: {}.PIN for pin {} (USE: {})",
+                                           polygon.layer, pin.name, pin.use_type);
+                                } else {
+                                    self.visible_layers.insert(detailed_layer);
+                                }
                             }
                         }
                     }
@@ -1347,13 +1361,21 @@ impl LefDefViewer {
                     continue;
                 }
 
-                let x = center.x + self.pan_x + (macro_def.origin.0 as f32 * self.zoom);
-                let y = center.y + self.pan_y + (macro_def.origin.1 as f32 * self.zoom);
+                // Calculate macro position - use origin as reference point but don't offset the display
+                // The PIN coordinates are already absolute coordinates within the macro space
+                let macro_origin_x = center.x + self.pan_x;
+                let macro_origin_y = center.y + self.pan_y;
+
+                // For OUTLINE rendering, we place the rect at origin and apply ORIGIN offset
+                let outline_x = macro_origin_x + (macro_def.origin.0 as f32 * self.zoom);
+                let outline_y = macro_origin_y + (macro_def.origin.1 as f32 * self.zoom);
                 let w = macro_def.size_x as f32 * self.zoom;
                 let h = macro_def.size_y as f32 * self.zoom;
 
-                let macro_rect =
-                    egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w.max(1.0), h.max(1.0)));
+                let macro_rect = egui::Rect::from_min_size(
+                    egui::pos2(outline_x, outline_y),
+                    egui::vec2(w.max(1.0), h.max(1.0)),
+                );
 
                 // Render macro outline if OUTLINE layer is visible
                 if self.visible_layers.contains("OUTLINE") {
@@ -1362,6 +1384,8 @@ impl LefDefViewer {
                 }
 
                 // Render pins with layer visibility
+                // PIN coordinates are absolute within the macro coordinate system
+                // We apply the same ORIGIN offset to align them with the OUTLINE
                 for pin in &macro_def.pins {
                     let mut pin_bounds: Option<(f32, f32, f32, f32)> = None; // min_x, min_y, max_x, max_y
                     let mut has_visible_shapes = false;
@@ -1378,12 +1402,12 @@ impl LefDefViewer {
 
                             let pin_rect = egui::Rect::from_min_max(
                                 egui::pos2(
-                                    x + (rect_data.xl as f32 * self.zoom),
-                                    y + (rect_data.yl as f32 * self.zoom),
+                                    outline_x + (rect_data.xl as f32 * self.zoom),
+                                    outline_y + (rect_data.yl as f32 * self.zoom),
                                 ),
                                 egui::pos2(
-                                    x + (rect_data.xh as f32 * self.zoom),
-                                    y + (rect_data.yh as f32 * self.zoom),
+                                    outline_x + (rect_data.xh as f32 * self.zoom),
+                                    outline_y + (rect_data.yh as f32 * self.zoom),
                                 ),
                             );
 
@@ -1391,10 +1415,10 @@ impl LefDefViewer {
                             painter.rect_filled(pin_rect, 0.0, color);
 
                             // Update pin bounds for text positioning
-                            let rect_min_x = x + (rect_data.xl as f32 * self.zoom);
-                            let rect_min_y = y + (rect_data.yl as f32 * self.zoom);
-                            let rect_max_x = x + (rect_data.xh as f32 * self.zoom);
-                            let rect_max_y = y + (rect_data.yh as f32 * self.zoom);
+                            let rect_min_x = outline_x + (rect_data.xl as f32 * self.zoom);
+                            let rect_min_y = outline_y + (rect_data.yl as f32 * self.zoom);
+                            let rect_max_x = outline_x + (rect_data.xh as f32 * self.zoom);
+                            let rect_max_y = outline_y + (rect_data.yh as f32 * self.zoom);
 
                             if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
                                 pin_bounds = Some((
@@ -1460,8 +1484,8 @@ impl LefDefViewer {
                             let final_polygons = self.compute_final_polygons(
                                 &additive_refs[..],
                                 &subtractive_refs[..],
-                                x,
-                                y,
+                                outline_x,
+                                outline_y,
                             );
 
                             // Render the final computed polygons
@@ -1535,12 +1559,12 @@ impl LefDefViewer {
 
                         let obs_rect = egui::Rect::from_min_max(
                             egui::pos2(
-                                x + (rect_data.xl as f32 * self.zoom),
-                                y + (rect_data.yl as f32 * self.zoom),
+                                outline_x + (rect_data.xl as f32 * self.zoom),
+                                outline_y + (rect_data.yl as f32 * self.zoom),
                             ),
                             egui::pos2(
-                                x + (rect_data.xh as f32 * self.zoom),
-                                y + (rect_data.yh as f32 * self.zoom),
+                                outline_x + (rect_data.xh as f32 * self.zoom),
+                                outline_y + (rect_data.yh as f32 * self.zoom),
                             ),
                         );
                         let color = self.get_layer_color(&detailed_layer);
@@ -1660,8 +1684,8 @@ impl LefDefViewer {
                         let final_polygons = self.compute_final_polygons(
                             &additive_refs[..],
                             &subtractive_refs[..],
-                            x,
-                            y,
+                            outline_x,
+                            outline_y,
                         );
 
                         // Render the final computed polygons as dashed outlines
@@ -1974,33 +1998,129 @@ impl LefDefViewer {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
+                        // Group layers by type for better organization
+                        let mut special_layers = Vec::new();
+                        let mut power_layers = Vec::new();
+                        let mut signal_layers = Vec::new();
+                        let mut obs_layers = Vec::new();
+
                         for layer in &all_layers {
-                            let mut is_visible = self.visible_layers.contains(layer);
+                            if layer == "OUTLINE" || layer == "LABEL" {
+                                special_layers.push(layer);
+                            } else if layer.contains("T8M") && layer.contains(".PIN") {
+                                power_layers.push(layer);
+                            } else if layer.contains(".PIN") {
+                                signal_layers.push(layer);
+                            } else if layer.contains(".OBS") {
+                                obs_layers.push(layer);
+                            }
+                        }
 
-                            // Color indicator using our layer color system
-                            let color = self.get_layer_color(layer);
+                        // Render special layers first
+                        if !special_layers.is_empty() {
+                            ui.heading("Special Layers");
+                            for layer in &special_layers {
+                                let mut is_visible = self.visible_layers.contains(*layer);
+                                let color = self.get_layer_color(layer);
 
-                            ui.horizontal(|ui| {
-                                // Color square
-                                let (rect, _) = ui.allocate_exact_size(
-                                    egui::Vec2::splat(12.0),
-                                    egui::Sense::hover(),
-                                );
-                                ui.painter().rect_filled(rect, 2.0, color);
+                                ui.horizontal(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::Vec2::splat(12.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(rect, 2.0, color);
 
-                                if ui.checkbox(&mut is_visible, layer).clicked() {
-                                    if is_visible {
-                                        self.visible_layers.insert(layer.clone());
-                                    } else {
-                                        self.visible_layers.remove(layer);
+                                    if ui.checkbox(&mut is_visible, *layer).clicked() {
+                                        if is_visible {
+                                            self.visible_layers.insert(layer.to_string());
+                                        } else {
+                                            self.visible_layers.remove(*layer);
+                                        }
+
+                                        if layer == &"LABEL" {
+                                            self.show_pin_text = is_visible;
+                                        }
                                     }
+                                });
+                            }
+                            ui.separator();
+                        }
 
-                                    // Sync show_pin_text when LABEL layer visibility changes
-                                    if layer == "LABEL" {
-                                        self.show_pin_text = is_visible;
+                        // Render power mesh layers
+                        if !power_layers.is_empty() {
+                            ui.heading("Power Mesh Layers");
+                            for layer in &power_layers {
+                                let mut is_visible = self.visible_layers.contains(*layer);
+                                let color = self.get_layer_color(layer);
+
+                                ui.horizontal(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::Vec2::splat(12.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(rect, 2.0, color);
+
+                                    if ui.checkbox(&mut is_visible, *layer).clicked() {
+                                        if is_visible {
+                                            self.visible_layers.insert(layer.to_string());
+                                        } else {
+                                            self.visible_layers.remove(*layer);
+                                        }
                                     }
-                                }
-                            });
+                                });
+                            }
+                            ui.separator();
+                        }
+
+                        // Render signal layers
+                        if !signal_layers.is_empty() {
+                            ui.heading("Signal Pin Layers");
+                            for layer in &signal_layers {
+                                let mut is_visible = self.visible_layers.contains(*layer);
+                                let color = self.get_layer_color(layer);
+
+                                ui.horizontal(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::Vec2::splat(12.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(rect, 2.0, color);
+
+                                    if ui.checkbox(&mut is_visible, *layer).clicked() {
+                                        if is_visible {
+                                            self.visible_layers.insert(layer.to_string());
+                                        } else {
+                                            self.visible_layers.remove(*layer);
+                                        }
+                                    }
+                                });
+                            }
+                            ui.separator();
+                        }
+
+                        // Render obstruction layers
+                        if !obs_layers.is_empty() {
+                            ui.heading("Obstruction Layers");
+                            for layer in &obs_layers {
+                                let mut is_visible = self.visible_layers.contains(*layer);
+                                let color = self.get_layer_color(layer);
+
+                                ui.horizontal(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::Vec2::splat(12.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(rect, 2.0, color);
+
+                                    if ui.checkbox(&mut is_visible, *layer).clicked() {
+                                        if is_visible {
+                                            self.visible_layers.insert(layer.to_string());
+                                        } else {
+                                            self.visible_layers.remove(*layer);
+                                        }
+                                    }
+                                });
+                            }
                         }
                     });
 
@@ -2018,6 +2138,16 @@ impl LefDefViewer {
                         self.visible_layers.clear();
                         // Sync show_pin_text when hiding all layers
                         self.show_pin_text = false;
+                    }
+                    if ui.button("Show Power Only").clicked() {
+                        self.visible_layers.clear();
+                        // Show only OUTLINE and power mesh layers
+                        self.visible_layers.insert("OUTLINE".to_string());
+                        for layer in &all_layers {
+                            if layer.contains("T8M") && layer.contains(".PIN") {
+                                self.visible_layers.insert(layer.clone());
+                            }
+                        }
                     }
                 });
 
