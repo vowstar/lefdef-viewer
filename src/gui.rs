@@ -46,6 +46,9 @@ pub struct LefDefViewer {
     show_layers_panel: bool,
     show_pin_text: bool,
     fit_to_view_requested: bool,
+    // LEF related selection states
+    selected_lef_pins: std::collections::HashSet<String>, // Format: "macro_name::pin_name"
+    selected_lef_obs: std::collections::HashSet<String>,  // Format: "macro_name::obs_layer"
     // DEF related selection states
     selected_components: std::collections::HashSet<String>,
     selected_pins: std::collections::HashSet<String>,
@@ -81,6 +84,9 @@ impl LefDefViewer {
             show_layers_panel: true,
             show_pin_text: true,
             fit_to_view_requested: false,
+            // LEF related selection states
+            selected_lef_pins: std::collections::HashSet::new(),
+            selected_lef_obs: std::collections::HashSet::new(),
             // DEF related selection states
             selected_components: std::collections::HashSet::new(),
             selected_pins: std::collections::HashSet::new(),
@@ -1012,9 +1018,147 @@ impl LefDefViewer {
                                     "Size: {:.3} x {:.3}",
                                     macro_def.size_x, macro_def.size_y
                                 ));
-                                ui.label(format!("Pins: {}", macro_def.pins.len()));
-                                for obs in &macro_def.obs {
-                                    ui.label(format!("Obstructions: {}", obs.rects.len()));
+
+                                // PINs section
+                                ui.collapsing(format!("📌 PINs ({})", macro_def.pins.len()), |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, true])
+                                        .max_height(120.0)
+                                        .show(ui, |ui| {
+                                            for pin in &macro_def.pins {
+                                                let pin_id = format!("{}::{}", macro_def.name, pin.name);
+                                                let mut is_selected = self.selected_lef_pins.contains(&pin_id);
+
+                                                ui.horizontal(|ui| {
+                                                    if ui.checkbox(&mut is_selected, "").clicked() {
+                                                        if is_selected {
+                                                            self.selected_lef_pins.insert(pin_id.clone());
+                                                        } else {
+                                                            self.selected_lef_pins.remove(&pin_id);
+                                                        }
+                                                    }
+
+                                                    let pin_label = if pin.use_type.is_empty() {
+                                                        format!("{} ({})", pin.name, pin.direction)
+                                                    } else {
+                                                        format!("{} ({}, {})", pin.name, pin.direction, pin.use_type)
+                                                    };
+
+                                                    let response = ui.label(pin_label);
+                                                    if response.hovered() {
+                                                        let layers: Vec<String> = pin.ports.iter()
+                                                            .flat_map(|port| port.rects.iter())
+                                                            .map(|rect| rect.layer.clone())
+                                                            .collect::<std::collections::HashSet<_>>()
+                                                            .into_iter()
+                                                            .collect();
+                                                        response.on_hover_text(format!(
+                                                            "Layers: {}\nShapes: {} rects, {} polygons",
+                                                            layers.join(", "),
+                                                            pin.ports.iter().map(|p| p.rects.len()).sum::<usize>(),
+                                                            pin.ports.iter().map(|p| p.polygons.len()).sum::<usize>()
+                                                        ));
+                                                    }
+                                                });
+                                            }
+                                        });
+
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("Select All PINs").clicked() {
+                                            for pin in &macro_def.pins {
+                                                let pin_id = format!("{}::{}", macro_def.name, pin.name);
+                                                self.selected_lef_pins.insert(pin_id);
+                                            }
+                                        }
+                                        if ui.small_button("Clear PINs").clicked() {
+                                            for pin in &macro_def.pins {
+                                                let pin_id = format!("{}::{}", macro_def.name, pin.name);
+                                                self.selected_lef_pins.remove(&pin_id);
+                                            }
+                                        }
+                                    });
+                                });
+
+                                // OBS (Obstructions) section
+                                let total_obs_rects: usize = macro_def.obs.iter().map(|obs| obs.rects.len()).sum();
+                                let total_obs_polys: usize = macro_def.obs.iter().map(|obs| obs.polygons.len()).sum();
+
+                                if total_obs_rects > 0 || total_obs_polys > 0 {
+                                    ui.collapsing(format!("🚫 Obstructions ({} rects, {} polys)", total_obs_rects, total_obs_polys), |ui| {
+                                        egui::ScrollArea::vertical()
+                                            .auto_shrink([false, true])
+                                            .max_height(120.0)
+                                            .show(ui, |ui| {
+                                                // Group obstructions by layer
+                                                let mut obs_by_layer: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
+
+                                                for obs in &macro_def.obs {
+                                                    for rect in &obs.rects {
+                                                        let entry = obs_by_layer.entry(rect.layer.clone()).or_insert((0, 0));
+                                                        entry.0 += 1;
+                                                    }
+                                                    for poly in &obs.polygons {
+                                                        let entry = obs_by_layer.entry(poly.layer.clone()).or_insert((0, 0));
+                                                        entry.1 += 1;
+                                                    }
+                                                }
+
+                                                for (layer, (rect_count, poly_count)) in obs_by_layer {
+                                                    let obs_id = format!("{}::{}", macro_def.name, layer);
+                                                    let mut is_selected = self.selected_lef_obs.contains(&obs_id);
+
+                                                    ui.horizontal(|ui| {
+                                                        if ui.checkbox(&mut is_selected, "").clicked() {
+                                                            if is_selected {
+                                                                self.selected_lef_obs.insert(obs_id.clone());
+                                                            } else {
+                                                                self.selected_lef_obs.remove(&obs_id);
+                                                            }
+                                                        }
+
+                                                        let obs_label = if poly_count > 0 {
+                                                            format!("{} ({} rects, {} polys)", layer, rect_count, poly_count)
+                                                        } else {
+                                                            format!("{} ({} rects)", layer, rect_count)
+                                                        };
+                                                        ui.label(obs_label);
+                                                    });
+                                                }
+                                            });
+
+                                        ui.horizontal(|ui| {
+                                            if ui.small_button("Select All OBS").clicked() {
+                                                for obs in &macro_def.obs {
+                                                    let mut layers = std::collections::HashSet::new();
+                                                    for rect in &obs.rects {
+                                                        layers.insert(rect.layer.clone());
+                                                    }
+                                                    for poly in &obs.polygons {
+                                                        layers.insert(poly.layer.clone());
+                                                    }
+                                                    for layer in layers {
+                                                        let obs_id = format!("{}::{}", macro_def.name, layer);
+                                                        self.selected_lef_obs.insert(obs_id);
+                                                    }
+                                                }
+                                            }
+                                            if ui.small_button("Clear OBS").clicked() {
+                                                for obs in &macro_def.obs {
+                                                    let mut layers = std::collections::HashSet::new();
+                                                    for rect in &obs.rects {
+                                                        layers.insert(rect.layer.clone());
+                                                    }
+                                                    for poly in &obs.polygons {
+                                                        layers.insert(poly.layer.clone());
+                                                    }
+                                                    for layer in layers {
+                                                        let obs_id = format!("{}::{}", macro_def.name, layer);
+                                                        self.selected_lef_obs.remove(&obs_id);
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    });
                                 }
                             });
                         }
@@ -1387,6 +1531,14 @@ impl LefDefViewer {
                 // PIN coordinates are absolute within the macro coordinate system
                 // We apply the same ORIGIN offset to align them with the OUTLINE
                 for pin in &macro_def.pins {
+                    // Check if this specific pin is selected (if any pins are selected)
+                    let pin_id = format!("{}::{}", macro_def.name, pin.name);
+                    if !self.selected_lef_pins.is_empty()
+                        && !self.selected_lef_pins.contains(&pin_id)
+                    {
+                        continue;
+                    }
+
                     let mut pin_bounds: Option<(f32, f32, f32, f32)> = None; // min_x, min_y, max_x, max_y
                     let mut has_visible_shapes = false;
 
@@ -1557,6 +1709,14 @@ impl LefDefViewer {
                             continue;
                         }
 
+                        // Check if this specific OBS layer is selected (if any OBS are selected)
+                        let obs_id = format!("{}::{}", macro_def.name, rect_data.layer);
+                        if !self.selected_lef_obs.is_empty()
+                            && !self.selected_lef_obs.contains(&obs_id)
+                        {
+                            continue;
+                        }
+
                         let obs_rect = egui::Rect::from_min_max(
                             egui::pos2(
                                 outline_x + (rect_data.xl as f32 * self.zoom),
@@ -1644,6 +1804,15 @@ impl LefDefViewer {
                         if !self.visible_layers.contains(&detailed_layer) {
                             continue;
                         }
+
+                        // Check if this specific OBS layer is selected (if any OBS are selected)
+                        let obs_id = format!("{}::{}", macro_def.name, polygon_data.layer);
+                        if !self.selected_lef_obs.is_empty()
+                            && !self.selected_lef_obs.contains(&obs_id)
+                        {
+                            continue;
+                        }
+
                         obs_layer_polygons
                             .entry(detailed_layer.clone())
                             .or_default()
