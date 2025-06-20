@@ -938,6 +938,52 @@ impl LefDefViewer {
         }
     }
 
+    fn handle_export_verilog_stub(&mut self) {
+        if let Some(lef_data) = &self.lef_data {
+            if let Some(file_path) = FileDialog::new()
+                .set_file_name("lef_cells.v")
+                .add_filter("Verilog files", &["v"])
+                .save_file()
+            {
+                match export::export_verilog_stub(lef_data, &file_path.to_string_lossy()) {
+                    Ok(()) => {
+                        self.success_message = Some(format!(
+                            "Successfully exported {} cells to Verilog stub file: {}",
+                            lef_data.macros.len(),
+                            file_path.display()
+                        ));
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Failed to export Verilog stub: {}", e));
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_export_lib_stub(&mut self) {
+        if let Some(lef_data) = &self.lef_data {
+            if let Some(file_path) = FileDialog::new()
+                .set_file_name("lef_cells.lib")
+                .add_filter("Liberty files", &["lib"])
+                .save_file()
+            {
+                match export::export_lib_stub(lef_data, &file_path.to_string_lossy()) {
+                    Ok(()) => {
+                        self.success_message = Some(format!(
+                            "Successfully exported {} cells to Liberty stub file: {}",
+                            lef_data.macros.len(),
+                            file_path.display()
+                        ));
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Failed to export Liberty stub: {}", e));
+                    }
+                }
+            }
+        }
+    }
+
     fn render_menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
@@ -982,6 +1028,28 @@ impl LefDefViewer {
                     .clicked()
                 {
                     self.handle_export_selected_cells_pinlist();
+                    ui.close_menu();
+                }
+
+                if ui
+                    .add_enabled(
+                        self.lef_data.is_some(),
+                        egui::Button::new("Export Verilog Stub"),
+                    )
+                    .clicked()
+                {
+                    self.handle_export_verilog_stub();
+                    ui.close_menu();
+                }
+
+                if ui
+                    .add_enabled(
+                        self.lef_data.is_some(),
+                        egui::Button::new("Export Liberty Stub"),
+                    )
+                    .clicked()
+                {
+                    self.handle_export_lib_stub();
                     ui.close_menu();
                 }
 
