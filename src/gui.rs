@@ -1709,7 +1709,12 @@ impl LefDefViewer {
                 // Render macro outline if OUTLINE layer is visible
                 if self.visible_layers.contains("OUTLINE") {
                     let outline_color = self.get_layer_color("OUTLINE");
-                    painter.rect_stroke(macro_rect, 0.0, egui::Stroke::new(2.0, outline_color));
+                    painter.rect_stroke(
+                        macro_rect,
+                        0.0,
+                        egui::Stroke::new(2.0, outline_color),
+                        egui::StrokeKind::Middle,
+                    );
                 }
 
                 // Render pins with layer visibility
@@ -1915,7 +1920,7 @@ impl LefDefViewer {
                         let color = self.get_layer_color(&detailed_layer);
                         // Render OBS as dashed outline instead of filled rectangle
                         let stroke = egui::Stroke::new(1.0, color);
-                        painter.rect_stroke(obs_rect, 0.0, stroke);
+                        painter.rect_stroke(obs_rect, 0.0, stroke, egui::StrokeKind::Middle);
 
                         // Add dashed pattern by drawing additional lines
                         let dash_length = 3.0;
@@ -2127,7 +2132,12 @@ impl LefDefViewer {
                     let rect = egui::Rect::from_two_pos(screen_p1, screen_p2);
 
                     // Draw rectangle outline
-                    painter.rect_stroke(rect, 0.0, egui::Stroke::new(3.0, egui::Color32::RED));
+                    painter.rect_stroke(
+                        rect,
+                        0.0,
+                        egui::Stroke::new(3.0, egui::Color32::RED),
+                        egui::StrokeKind::Middle,
+                    );
 
                     // Draw corner markers
                     painter.circle_filled(screen_p1, 3.0, egui::Color32::RED);
@@ -2209,6 +2219,7 @@ impl LefDefViewer {
                         comp_rect,
                         0.0,
                         egui::Stroke::new(1.0, egui::Color32::WHITE),
+                        egui::StrokeKind::Middle,
                     );
 
                     // Draw component name if zoom is high enough
