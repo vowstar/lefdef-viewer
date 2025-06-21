@@ -7,8 +7,8 @@ use nom::{
     character::complete::{char, multispace0, space1},
     multi::separated_list0,
     number::complete::double,
-    sequence::{delimited, preceded, terminated, tuple},
-    IResult,
+    sequence::{delimited, preceded, terminated},
+    IResult, Parser,
 };
 
 use super::{Def, DefGCellGrid, DefPolygon, DefVia, DefViaLayer};
@@ -25,7 +25,8 @@ fn string_literal(input: &str) -> IResult<&str, &str> {
     alt((
         delimited(char('"'), take_until("\""), char('"')),
         identifier,
-    ))(input)
+    ))
+    .parse(input)
 }
 
 #[allow(dead_code)]
@@ -35,11 +36,12 @@ fn parse_die_area(input: &str) -> IResult<&str, Vec<(f64, f64)>> {
     let (input, _) = multispace0(input)?;
     let (input, points) = separated_list0(
         multispace0,
-        tuple((
+        (
             preceded(tag("("), double),
             preceded(space1, terminated(double, tag(")"))),
-        )),
-    )(input)?;
+        ),
+    )
+    .parse(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag(";")(input)?;
 
@@ -53,8 +55,11 @@ fn parse_gcell_grid(input: &str) -> IResult<&str, (Vec<DefGCellGrid>, Vec<DefGCe
     let mut x_grids = Vec::new();
     let mut y_grids = Vec::new();
 
-    while let Ok((new_rest, grid_type)) =
-        alt::<_, _, nom::error::Error<&str>, _>((tag("GCELLGRID X"), tag("GCELLGRID Y")))(rest)
+    while let Ok((new_rest, grid_type)) = alt((
+        tag::<_, _, nom::error::Error<&str>>("GCELLGRID X"),
+        tag::<_, _, nom::error::Error<&str>>("GCELLGRID Y"),
+    ))
+    .parse(rest)
     {
         let is_x = grid_type.ends_with('X');
         rest = new_rest;

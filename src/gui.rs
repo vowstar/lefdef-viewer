@@ -426,7 +426,8 @@ impl LefDefViewer {
 
                         if let Some(existing_result) = result {
                             // Union with existing result
-                            result = Some(existing_result.union(&geo_polygon.into()));
+                            let geo_multi_polygon: geo::MultiPolygon<f64> = geo_polygon.into();
+                            result = Some(existing_result.union(&geo_multi_polygon));
                         } else {
                             // First polygon
                             result = Some(geo_polygon.into());
@@ -462,7 +463,8 @@ impl LefDefViewer {
                             let geo_polygon = GeoPolygon::new(line_string, vec![]);
 
                             // Subtract from current result
-                            current_result = current_result.difference(&geo_polygon.into());
+                            let geo_multi_polygon: geo::MultiPolygon<f64> = geo_polygon.into();
+                            current_result = current_result.difference(&geo_multi_polygon);
                         }
                     }
                 }

@@ -9,7 +9,7 @@ use nom::{
     multi::many0,
     number::complete::double,
     sequence::{delimited, pair},
-    IResult,
+    IResult, Parser,
 };
 
 use super::{Lef, LefMacro, LefObstruction, LefPin, LefPolygon, LefPort, LefRect};
@@ -32,7 +32,8 @@ fn identifier(input: &str) -> IResult<&str, &str> {
     recognize(pair(
         alt((alpha1, tag("_"))),
         many0(alt((alphanumeric1, tag("_")))),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 #[allow(dead_code)]
@@ -40,7 +41,8 @@ fn string_literal(input: &str) -> IResult<&str, &str> {
     alt((
         delimited(char('"'), take_until("\""), char('"')),
         identifier,
-    ))(input)
+    ))
+    .parse(input)
 }
 
 #[allow(dead_code)]
@@ -146,8 +148,8 @@ fn parse_obstruction(input: &str) -> IResult<&str, LefObstruction> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("OBS")(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, rects) = many0(parse_rect)(input)?;
-    let (input, polygons) = many0(parse_polygon)(input)?;
+    let (input, rects) = many0(parse_rect).parse(input)?;
+    let (input, polygons) = many0(parse_polygon).parse(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("END")(input)?;
 
