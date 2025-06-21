@@ -8,6 +8,7 @@ use rfd::FileDialog;
 use crate::def::{reader::DefReader, Def};
 use crate::export::{self, VoltageConfig};
 use crate::lef::{reader::LefReader, Lef};
+use crate::voltage_dialog::VoltageDialog;
 
 /// Edge proximity detection result
 #[derive(Debug, Clone)]
@@ -46,6 +47,7 @@ pub struct LefDefViewer {
     show_layers_panel: bool,
     show_pin_text: bool,
     fit_to_view_requested: bool,
+    fit_to_view_delay_frames: u8, // Delay fit to view by a few frames for UI stability
     // LEF related selection states
     selected_lef_pins: std::collections::HashSet<String>, // Format: "macro_name::pin_name"
     selected_lef_obs: std::collections::HashSet<String>,  // Format: "macro_name::obs_layer"
@@ -58,7 +60,7 @@ pub struct LefDefViewer {
     show_nets: bool,
     show_diearea: bool,
     // Voltage configuration for Liberty export
-    show_voltage_dialog: bool,
+    voltage_dialog: VoltageDialog,
     voltage_config: VoltageConfig,
 }
 
@@ -87,6 +89,7 @@ impl LefDefViewer {
             show_layers_panel: true,
             show_pin_text: true,
             fit_to_view_requested: false,
+            fit_to_view_delay_frames: 0,
             // LEF related selection states
             selected_lef_pins: std::collections::HashSet::new(),
             selected_lef_obs: std::collections::HashSet::new(),
@@ -99,7 +102,7 @@ impl LefDefViewer {
             show_nets: true,
             show_diearea: true,
             // Voltage configuration for Liberty export
-            show_voltage_dialog: false,
+            voltage_dialog: VoltageDialog::new(),
             voltage_config: VoltageConfig::default(),
         }
     }
@@ -833,7 +836,8 @@ impl LefDefViewer {
                 // Auto-show layers panel when LEF file is loaded successfully
                 self.show_layers_panel = true;
                 // Auto fit to view when LEF file is loaded successfully
-                self.fit_to_view_requested = true;
+                // Delay fit to view by a few frames to ensure UI layout is stable
+                self.fit_to_view_delay_frames = 3;
             }
             Err(e) => {
                 self.error_message = Some(format!("Failed to load LEF file: {}", e));
@@ -849,7 +853,8 @@ impl LefDefViewer {
                 self.def_file_path = Some(path);
                 self.error_message = None;
                 // Auto fit to view when DEF file is loaded successfully
-                self.fit_to_view_requested = true;
+                // Delay fit to view by a few frames to ensure UI layout is stable
+                self.fit_to_view_delay_frames = 3;
             }
             Err(e) => {
                 self.error_message = Some(format!("Failed to load DEF file: {}", e));
@@ -973,50 +978,8 @@ impl LefDefViewer {
 
     fn handle_export_lib_stub(&mut self) {
         if let Some(lef_data) = &self.lef_data {
-            // Collect all unique power and ground pins
-            let mut power_pins = std::collections::BTreeSet::new();
-            let mut ground_pins = std::collections::BTreeSet::new();
-
-            for macro_def in &lef_data.macros {
-                for pin in &macro_def.pins {
-                    let clean_name = pin.name.replace('!', "");
-                    match pin.use_type.as_str() {
-                        "POWER" => {
-                            power_pins.insert(clean_name);
-                        }
-                        "GROUND" => {
-                            ground_pins.insert(clean_name);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            // Initialize voltage configuration
-            self.voltage_config.power_pins.clear();
-            self.voltage_config.ground_pins.clear();
-
-            // Set default voltages for all power pins
-            for power_pin in power_pins {
-                self.voltage_config
-                    .power_pins
-                    .insert(power_pin.clone(), 0.8);
-                if self.voltage_config.selected_related_power.is_empty() {
-                    self.voltage_config.selected_related_power = power_pin;
-                }
-            }
-
-            // Set default voltages for all ground pins
-            for ground_pin in ground_pins {
-                self.voltage_config
-                    .ground_pins
-                    .insert(ground_pin.clone(), 0.0);
-                if self.voltage_config.selected_related_ground.is_empty() {
-                    self.voltage_config.selected_related_ground = ground_pin;
-                }
-            }
-
-            self.show_voltage_dialog = true;
+            VoltageDialog::initialize_config(lef_data, &mut self.voltage_config);
+            self.voltage_dialog.show();
         }
     }
 
@@ -1660,7 +1623,15 @@ impl LefDefViewer {
         let (response, painter) = ui.allocate_painter(available_size, egui::Sense::drag());
 
         // Use the previously recorded `available_size` for fit-to-view
-        // Handle fit to view request
+        // Handle fit to view request with frame delay
+        if self.fit_to_view_delay_frames > 0 {
+            self.fit_to_view_delay_frames -= 1;
+            if self.fit_to_view_delay_frames == 0 {
+                self.fit_to_view_requested = true;
+            }
+            ui.ctx().request_repaint(); // Continue animation until delay is complete
+        }
+
         if self.fit_to_view_requested {
             self.fit_to_view(available_size);
             self.fit_to_view_requested = false;
@@ -2848,110 +2819,16 @@ impl eframe::App for LefDefViewer {
                 });
         }
 
-        // Voltage configuration dialog for Liberty export
-        if self.show_voltage_dialog {
-            egui::Window::new("Voltage Configuration")
-                .collapsible(false)
-                .resizable(true)
-                .default_width(400.0)
-                .show(ctx, |ui| {
-                    ui.label("Configure voltage values for Liberty export:");
-                    ui.separator();
-
-                    // Nominal voltage configuration
-                    ui.horizontal(|ui| {
-                        ui.label("Nominal Voltage (V):");
-                        ui.add(
-                            egui::DragValue::new(&mut self.voltage_config.nom_voltage)
-                                .speed(0.01)
-                                .range(0.0..=5.0)
-                                .fixed_decimals(2),
-                        );
-                    });
-                    ui.separator();
-
-                    // Power pins configuration
-                    if !self.voltage_config.power_pins.is_empty() {
-                        ui.label("Power Pins:");
-                        for (pin_name, voltage) in &mut self.voltage_config.power_pins {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("{}:", pin_name));
-                                ui.add(
-                                    egui::DragValue::new(voltage)
-                                        .speed(0.01)
-                                        .range(0.0..=5.0)
-                                        .fixed_decimals(2)
-                                        .suffix(" V"),
-                                );
-                            });
-                        }
-                        ui.separator();
-                    }
-
-                    // Ground pins configuration
-                    if !self.voltage_config.ground_pins.is_empty() {
-                        ui.label("Ground Pins:");
-                        for (pin_name, voltage) in &mut self.voltage_config.ground_pins {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("{}:", pin_name));
-                                ui.add(
-                                    egui::DragValue::new(voltage)
-                                        .speed(0.01)
-                                        .range(-2.0..=2.0)
-                                        .fixed_decimals(2)
-                                        .suffix(" V"),
-                                );
-                            });
-                        }
-                        ui.separator();
-                    }
-
-                    // Related power/ground pin selection
-                    if self.voltage_config.power_pins.len() > 1 {
-                        ui.horizontal(|ui| {
-                            ui.label("Default Related Power Pin:");
-                            egui::ComboBox::from_id_source("related_power")
-                                .selected_text(&self.voltage_config.selected_related_power)
-                                .show_ui(ui, |ui| {
-                                    for pin_name in self.voltage_config.power_pins.keys() {
-                                        ui.selectable_value(
-                                            &mut self.voltage_config.selected_related_power,
-                                            pin_name.clone(),
-                                            pin_name,
-                                        );
-                                    }
-                                });
-                        });
-                    }
-
-                    if self.voltage_config.ground_pins.len() > 1 {
-                        ui.horizontal(|ui| {
-                            ui.label("Default Related Ground Pin:");
-                            egui::ComboBox::from_id_source("related_ground")
-                                .selected_text(&self.voltage_config.selected_related_ground)
-                                .show_ui(ui, |ui| {
-                                    for pin_name in self.voltage_config.ground_pins.keys() {
-                                        ui.selectable_value(
-                                            &mut self.voltage_config.selected_related_ground,
-                                            pin_name.clone(),
-                                            pin_name,
-                                        );
-                                    }
-                                });
-                        });
-                    }
-
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        if ui.button("Export").clicked() {
-                            self.show_voltage_dialog = false;
-                            self.perform_lib_export();
-                        }
-                        if ui.button("Cancel").clicked() {
-                            self.show_voltage_dialog = false;
-                        }
-                    });
-                });
+        // Enhanced voltage configuration dialog for Liberty export (modular)
+        let mut export_requested = false;
+        self.voltage_dialog.render(
+            ctx,
+            &mut self.voltage_config,
+            self.lef_data.as_ref(),
+            &mut export_requested,
+        );
+        if export_requested {
+            self.perform_lib_export();
         }
 
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {

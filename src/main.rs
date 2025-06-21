@@ -5,6 +5,7 @@ mod def;
 mod export;
 mod gui;
 mod lef;
+mod voltage_dialog;
 
 use eframe::egui;
 

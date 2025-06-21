@@ -17,6 +17,12 @@ pub struct VoltageConfig {
     pub selected_related_power: String,                      // default related power pin
     pub selected_related_ground: String,                     // default related ground pin
     pub nom_voltage: f32,                                    // nominal voltage
+    // Pin-specific related power/ground configuration
+    pub pin_related_power: std::collections::BTreeMap<String, String>, // pin_name -> related_power_pin
+    pub pin_related_ground: std::collections::BTreeMap<String, String>, // pin_name -> related_ground_pin
+    // UI state for pin selection
+    pub selected_pins: std::collections::BTreeSet<String>, // selected pins for batch operations
+    pub pin_filter: String,                                // search filter for pins
 }
 
 impl Default for VoltageConfig {
@@ -26,7 +32,11 @@ impl Default for VoltageConfig {
             ground_pins: std::collections::BTreeMap::new(),
             selected_related_power: String::new(),
             selected_related_ground: String::new(),
-            nom_voltage: 1.1,
+            nom_voltage: 0.8, // Changed from 1.1 to 0.8
+            pin_related_power: std::collections::BTreeMap::new(),
+            pin_related_ground: std::collections::BTreeMap::new(),
+            selected_pins: std::collections::BTreeSet::new(),
+            pin_filter: String::new(),
         }
     }
 }
@@ -431,16 +441,33 @@ fn generate_lib_pin_definition_with_config(
         } else {
             // Regular signal pin
             let direction = pin.direction.to_lowercase();
-            let related_power = if !voltage_config.selected_related_power.is_empty() {
-                &voltage_config.selected_related_power
-            } else {
-                "VDD"
-            };
-            let related_ground = if !voltage_config.selected_related_ground.is_empty() {
-                &voltage_config.selected_related_ground
-            } else {
-                "VSS"
-            };
+            // Check for pin-specific related power configuration first
+            let related_power = voltage_config
+                .pin_related_power
+                .get(&clean_name)
+                .map(|s| s.as_str())
+                .or_else(|| {
+                    if !voltage_config.selected_related_power.is_empty() {
+                        Some(&voltage_config.selected_related_power)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("VDD");
+
+            // Check for pin-specific related ground configuration first
+            let related_ground = voltage_config
+                .pin_related_ground
+                .get(&clean_name)
+                .map(|s| s.as_str())
+                .or_else(|| {
+                    if !voltage_config.selected_related_ground.is_empty() {
+                        Some(&voltage_config.selected_related_ground)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("VSS");
             format!(
                 "   pin({})  {{\n           direction : {};\n           capacitance : 0.02;\n           related_power_pin : {} ;\n           related_ground_pin  : {} ;\n   }}\n",
                 clean_name, direction, related_power, related_ground
@@ -471,23 +498,41 @@ fn generate_lib_pin_definition_with_config(
             // Regular signal bus
             let direction = record.direction.to_lowercase();
             let bus_type = get_bus_type_name(record.width);
-            let related_power = if !voltage_config.selected_related_power.is_empty() {
-                &voltage_config.selected_related_power
-            } else {
-                "VDD"
-            };
-            let related_ground = if !voltage_config.selected_related_ground.is_empty() {
-                &voltage_config.selected_related_ground
-            } else {
-                "VSS"
-            };
 
-            // Extract base name from compressed name
+            // Extract base name from compressed name for configuration lookup
             let base_name = if let Some(bracket_start) = record.name.rfind('[') {
                 &record.name[..bracket_start]
             } else {
                 &record.name
             };
+
+            // Check for bus-specific related power configuration first
+            let related_power = voltage_config
+                .pin_related_power
+                .get(base_name)
+                .map(|s| s.as_str())
+                .or_else(|| {
+                    if !voltage_config.selected_related_power.is_empty() {
+                        Some(&voltage_config.selected_related_power)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("VDD");
+
+            // Check for bus-specific related ground configuration first
+            let related_ground = voltage_config
+                .pin_related_ground
+                .get(base_name)
+                .map(|s| s.as_str())
+                .or_else(|| {
+                    if !voltage_config.selected_related_ground.is_empty() {
+                        Some(&voltage_config.selected_related_ground)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("VSS");
 
             let mut result = format!(
                 "   bus({}) {{\n        bus_type       : \"{}\";\n        related_power_pin : {} ;\n        related_ground_pin  : {} ;\n\n",
