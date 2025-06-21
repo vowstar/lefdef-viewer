@@ -2489,45 +2489,50 @@ impl LefDefViewer {
                                 });
                             }
                         }
-                    });
 
-                ui.separator();
+                        ui.separator();
 
-                ui.horizontal(|ui| {
-                    if ui.button("Show All").clicked() {
-                        for layer in &all_layers {
-                            self.visible_layers.insert(layer.clone());
-                        }
-                        // Sync show_pin_text when showing all layers
-                        self.show_pin_text = true;
-                    }
-                    if ui.button("Hide All").clicked() {
-                        self.visible_layers.clear();
-                        // Sync show_pin_text when hiding all layers
-                        self.show_pin_text = false;
-                    }
-                    if ui.button("Show Power Only").clicked() {
-                        self.visible_layers.clear();
-                        // Show only OUTLINE and power mesh layers
-                        self.visible_layers.insert("OUTLINE".to_string());
-                        for layer in &all_layers {
-                            if layer.contains("T8M") && layer.contains(".PIN") {
-                                self.visible_layers.insert(layer.clone());
+                        // Move button group inside ScrollArea for better accessibility
+                        ui.horizontal(|ui| {
+                            if ui.button("Show All").clicked() {
+                                for layer in &all_layers {
+                                    self.visible_layers.insert(layer.clone());
+                                }
+                                // Sync show_pin_text when showing all layers
+                                self.show_pin_text = true;
                             }
-                        }
-                    }
-                });
+                            if ui.button("Hide All").clicked() {
+                                self.visible_layers.clear();
+                                // Sync show_pin_text when hiding all layers
+                                self.show_pin_text = false;
+                            }
+                            if ui.button("Show Power Only").clicked() {
+                                self.visible_layers.clear();
+                                // Show only OUTLINE and power mesh layers
+                                self.visible_layers.insert("OUTLINE".to_string());
+                                for layer in &all_layers {
+                                    if layer.contains("T8M") && layer.contains(".PIN") {
+                                        self.visible_layers.insert(layer.clone());
+                                    }
+                                }
+                            }
+                        });
 
-                ui.separator();
-                ui.label(format!("Total layers: {}", all_layers.len()));
-                ui.label(format!("Visible: {}", self.visible_layers.len()));
+                        ui.separator();
 
-                // Debug info
-                ui.separator();
-                ui.label("DEBUG - All layers:");
-                for layer in &all_layers {
-                    ui.monospace(layer);
-                }
+                        // Move statistics inside ScrollArea for consistent layout
+                        ui.label(format!("Total layers: {}", all_layers.len()));
+                        ui.label(format!("Visible: {}", self.visible_layers.len()));
+
+                        ui.separator();
+
+                        // Replace direct debug output with collapsible section
+                        ui.collapsing("Debug - All Layers", |ui| {
+                            for layer in &all_layers {
+                                ui.monospace(layer);
+                            }
+                        });
+                    });
             } else {
                 ui.label("No LEF file loaded");
             }
