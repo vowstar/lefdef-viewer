@@ -288,7 +288,8 @@ impl VoltageDialog {
             .collapsible(false)
             .resizable(true)
             .default_width(800.0)
-            .default_height(600.0)
+            .default_height(450.0)
+            .max_height(ctx.screen_rect().height() - 100.0)
             .show(ctx, |ui| {
                 ui.label("Configure voltage values and pin settings for Liberty export:");
                 ui.separator();
