@@ -826,6 +826,8 @@ impl LefDefViewer {
                 self.error_message = None;
                 // Auto-show layers panel when LEF file is loaded successfully
                 self.show_layers_panel = true;
+                // Auto fit to view when LEF file is loaded successfully
+                self.fit_to_view_requested = true;
             }
             Err(e) => {
                 self.error_message = Some(format!("Failed to load LEF file: {}", e));
@@ -840,6 +842,8 @@ impl LefDefViewer {
                 self.def_data = Some(def);
                 self.def_file_path = Some(path);
                 self.error_message = None;
+                // Auto fit to view when DEF file is loaded successfully
+                self.fit_to_view_requested = true;
             }
             Err(e) => {
                 self.error_message = Some(format!("Failed to load DEF file: {}", e));
