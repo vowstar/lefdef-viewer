@@ -74,9 +74,10 @@ fn group_pins_by_bus(pins: &[LefPin]) -> Vec<Vec<&LefPin>> {
     let mut base_name_groups: HashMap<String, Vec<&LefPin>> = HashMap::new();
     let mut single_pins: Vec<&LefPin> = Vec::new();
 
-    // Group pins by base name
+    // Group pins by base name (using cleaned names)
     for pin in pins {
-        if let Some((base_name, _index)) = extract_bus_info(&pin.name) {
+        let cleaned_name = clean_pin_name(&pin.name);
+        if let Some((base_name, _index)) = extract_bus_info(&cleaned_name) {
             base_name_groups.entry(base_name).or_default().push(pin);
         } else {
             single_pins.push(pin);
@@ -112,10 +113,13 @@ fn group_pins_by_bus(pins: &[LefPin]) -> Vec<Vec<&LefPin>> {
             continue;
         }
 
-        // Extract indices and check continuity
+        // Extract indices and check continuity (using cleaned names)
         let mut indices: Vec<usize> = group
             .iter()
-            .filter_map(|pin| extract_bus_info(&pin.name).map(|(_, index)| index))
+            .filter_map(|pin| {
+                let cleaned_name = clean_pin_name(&pin.name);
+                extract_bus_info(&cleaned_name).map(|(_, index)| index)
+            })
             .collect();
 
         if indices.len() != group.len() {
@@ -147,7 +151,7 @@ fn compress_bus_group(pins: &[&LefPin]) -> PinCsvRecord {
         // Single pin
         let pin = pins[0];
         return PinCsvRecord {
-            name: pin.name.clone(),
+            name: clean_pin_name(&pin.name),
             direction: pin.direction.clone(),
             pin_type: pin.use_type.clone(),
             width: 1,
@@ -156,12 +160,16 @@ fn compress_bus_group(pins: &[&LefPin]) -> PinCsvRecord {
 
     // Multi-pin bus
     let first_pin = pins[0];
-    let base_name = extract_bus_info(&first_pin.name).unwrap().0;
+    let cleaned_name = clean_pin_name(&first_pin.name);
+    let base_name = extract_bus_info(&cleaned_name).unwrap().0;
 
     // Get all indices and find range
     let mut indices: Vec<usize> = pins
         .iter()
-        .filter_map(|pin| extract_bus_info(&pin.name).map(|(_, index)| index))
+        .filter_map(|pin| {
+            let cleaned = clean_pin_name(&pin.name);
+            extract_bus_info(&cleaned).map(|(_, index)| index)
+        })
         .collect();
     indices.sort();
 
@@ -285,6 +293,16 @@ fn get_bus_type_name(width: usize) -> String {
     format!("DATA{}B", width)
 }
 
+/// Clean pin name by removing special characters like '!'
+fn clean_pin_name(name: &str) -> String {
+    name.replace('!', "")
+}
+
+/// Check if a pin is a power or ground pin
+fn is_power_pin(pin: &LefPin) -> bool {
+    pin.use_type == "POWER" || pin.use_type == "GROUND"
+}
+
 /// Generate Verilog port declaration for a pin group
 fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
     if pin_group.len() == 1 {
@@ -296,7 +314,18 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
             "INOUT" => "inout",
             _ => "input", // default
         };
-        format!("    {} {}    /**< {} */", direction, pin.name, pin.name)
+
+        let clean_name = clean_pin_name(&pin.name);
+        let is_power = is_power_pin(pin);
+
+        if is_power {
+            format!(
+                "`ifdef PG_EXIST\n    {} {}    /**< {} */\n`endif /* PG_EXIST */",
+                direction, clean_name, clean_name
+            )
+        } else {
+            format!("    {} {}    /**< {} */", direction, clean_name, clean_name)
+        }
     } else {
         // Bus pin - use existing compression logic
         let record = compress_bus_group(pin_group);
@@ -307,19 +336,28 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
             _ => "input", // default
         };
 
+        let clean_name = clean_pin_name(&record.name);
+        let is_power = pin_group.iter().any(|pin| is_power_pin(pin));
+
         // Extract base name and range from compressed name
-        if let Some(bracket_start) = record.name.rfind('[') {
-            let base_name = &record.name[..bracket_start];
-            let range_part = &record.name[bracket_start..];
+        let port_declaration = if let Some(bracket_start) = clean_name.rfind('[') {
+            let base_name = &clean_name[..bracket_start];
+            let range_part = &clean_name[bracket_start..];
             format!(
                 "    {} {} {}    /**< {} */",
-                direction, range_part, base_name, record.name
+                direction, range_part, base_name, clean_name
             )
         } else {
+            format!("    {} {}    /**< {} */", direction, clean_name, clean_name)
+        };
+
+        if is_power {
             format!(
-                "    {} {}    /**< {} */",
-                direction, record.name, record.name
+                "`ifdef PG_EXIST\n{}\n`endif /* PG_EXIST */",
+                port_declaration
             )
+        } else {
+            port_declaration
         }
     }
 }
