@@ -187,7 +187,11 @@ fn compress_bus_group(pins: &[&LefPin]) -> PinCsvRecord {
 
 /// Format pins into a compressed comma-separated string of "DIRECTION:NAME" format
 fn format_pinlist_compressed(pins: &[LefPin]) -> String {
-    let groups = group_pins_by_bus(pins);
+    // Sort pins by type priority before grouping
+    let mut sorted_pins = pins.to_vec();
+    sort_pins_by_type(&mut sorted_pins);
+
+    let groups = group_pins_by_bus(&sorted_pins);
     let records: Vec<PinCsvRecord> = groups
         .iter()
         .map(|group| compress_bus_group(group))
@@ -220,7 +224,11 @@ pub fn export_cell_pinlist_to_csv(
     let file = File::create(file_path)?;
     let mut writer = Writer::from_writer(file);
 
-    let groups = group_pins_by_bus(&macro_def.pins);
+    // Sort pins by type priority before grouping
+    let mut sorted_pins = macro_def.pins.clone();
+    sort_pins_by_type(&mut sorted_pins);
+
+    let groups = group_pins_by_bus(&sorted_pins);
     for group in groups {
         let record = compress_bus_group(&group);
         writer.serialize(record)?;
@@ -301,6 +309,20 @@ fn clean_pin_name(name: &str) -> String {
 /// Check if a pin is a power or ground pin
 fn is_power_pin(pin: &LefPin) -> bool {
     pin.use_type == "POWER" || pin.use_type == "GROUND"
+}
+
+/// Get pin priority for sorting (POWER=0, GROUND=1, others=2)
+fn get_pin_sort_priority(pin: &LefPin) -> u8 {
+    match pin.use_type.as_str() {
+        "POWER" => 0,
+        "GROUND" => 1,
+        _ => 2,
+    }
+}
+
+/// Sort pins by type priority: POWER, GROUND, then others
+fn sort_pins_by_type(pins: &mut [LefPin]) {
+    pins.sort_by_key(|pin| (get_pin_sort_priority(pin), pin.name.clone()));
 }
 
 /// Generate Verilog port declaration for a pin group
@@ -443,8 +465,11 @@ pub fn export_verilog_stub(
         // Generate module declaration
         writeln!(file, "module {} (", macro_def.name)?;
 
-        // Generate port list
-        let groups = group_pins_by_bus(&macro_def.pins);
+        // Sort pins by type priority before generating port list
+        let mut sorted_pins = macro_def.pins.clone();
+        sort_pins_by_type(&mut sorted_pins);
+
+        let groups = group_pins_by_bus(&sorted_pins);
         let mut port_declarations = Vec::new();
 
         for group in groups {
@@ -611,8 +636,11 @@ pub fn export_lib_stub(lef_data: &Lef, file_path: &str) -> Result<(), Box<dyn st
         writeln!(file, "   }}")?;
         writeln!(file)?;
 
-        // Generate pin definitions
-        let groups = group_pins_by_bus(&macro_def.pins);
+        // Sort pins by type priority before generating pin definitions
+        let mut sorted_pins = macro_def.pins.clone();
+        sort_pins_by_type(&mut sorted_pins);
+
+        let groups = group_pins_by_bus(&sorted_pins);
         for group in groups {
             let pin_def = generate_lib_pin_definition(&group);
             write!(file, "{}", pin_def)?;
