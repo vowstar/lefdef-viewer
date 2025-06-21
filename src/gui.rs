@@ -6,7 +6,7 @@ use egui::epaint::{PathShape, PathStroke};
 use rfd::FileDialog;
 
 use crate::def::{reader::DefReader, Def};
-use crate::export;
+use crate::export::{self, VoltageConfig};
 use crate::lef::{reader::LefReader, Lef};
 
 /// Edge proximity detection result
@@ -57,6 +57,9 @@ pub struct LefDefViewer {
     show_pins: bool,
     show_nets: bool,
     show_diearea: bool,
+    // Voltage configuration for Liberty export
+    show_voltage_dialog: bool,
+    voltage_config: VoltageConfig,
 }
 
 impl LefDefViewer {
@@ -95,6 +98,9 @@ impl LefDefViewer {
             show_pins: true,
             show_nets: true,
             show_diearea: true,
+            // Voltage configuration for Liberty export
+            show_voltage_dialog: false,
+            voltage_config: VoltageConfig::default(),
         }
     }
 
@@ -967,12 +973,65 @@ impl LefDefViewer {
 
     fn handle_export_lib_stub(&mut self) {
         if let Some(lef_data) = &self.lef_data {
+            // Collect all unique power and ground pins
+            let mut power_pins = std::collections::BTreeSet::new();
+            let mut ground_pins = std::collections::BTreeSet::new();
+
+            for macro_def in &lef_data.macros {
+                for pin in &macro_def.pins {
+                    let clean_name = pin.name.replace('!', "");
+                    match pin.use_type.as_str() {
+                        "POWER" => {
+                            power_pins.insert(clean_name);
+                        }
+                        "GROUND" => {
+                            ground_pins.insert(clean_name);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // Initialize voltage configuration
+            self.voltage_config.power_pins.clear();
+            self.voltage_config.ground_pins.clear();
+
+            // Set default voltages for all power pins
+            for power_pin in power_pins {
+                self.voltage_config
+                    .power_pins
+                    .insert(power_pin.clone(), 0.8);
+                if self.voltage_config.selected_related_power.is_empty() {
+                    self.voltage_config.selected_related_power = power_pin;
+                }
+            }
+
+            // Set default voltages for all ground pins
+            for ground_pin in ground_pins {
+                self.voltage_config
+                    .ground_pins
+                    .insert(ground_pin.clone(), 0.0);
+                if self.voltage_config.selected_related_ground.is_empty() {
+                    self.voltage_config.selected_related_ground = ground_pin;
+                }
+            }
+
+            self.show_voltage_dialog = true;
+        }
+    }
+
+    fn perform_lib_export(&mut self) {
+        if let Some(lef_data) = &self.lef_data {
             if let Some(file_path) = FileDialog::new()
                 .set_file_name("lef_cells.lib")
                 .add_filter("Liberty files", &["lib"])
                 .save_file()
             {
-                match export::export_lib_stub(lef_data, &file_path.to_string_lossy()) {
+                match export::export_lib_stub_with_voltage_config(
+                    lef_data,
+                    &file_path.to_string_lossy(),
+                    &self.voltage_config,
+                ) {
                     Ok(()) => {
                         self.success_message = Some(format!(
                             "Successfully exported {} cells to Liberty stub file: {}",
@@ -2784,6 +2843,112 @@ impl eframe::App for LefDefViewer {
                         ui.allocate_space(egui::Vec2::new(ui.available_width() / 2.0 - 25.0, 0.0));
                         if ui.button("OK").clicked() {
                             self.success_message = None;
+                        }
+                    });
+                });
+        }
+
+        // Voltage configuration dialog for Liberty export
+        if self.show_voltage_dialog {
+            egui::Window::new("Voltage Configuration")
+                .collapsible(false)
+                .resizable(true)
+                .default_width(400.0)
+                .show(ctx, |ui| {
+                    ui.label("Configure voltage values for Liberty export:");
+                    ui.separator();
+
+                    // Nominal voltage configuration
+                    ui.horizontal(|ui| {
+                        ui.label("Nominal Voltage (V):");
+                        ui.add(
+                            egui::DragValue::new(&mut self.voltage_config.nom_voltage)
+                                .speed(0.01)
+                                .range(0.0..=5.0)
+                                .fixed_decimals(2),
+                        );
+                    });
+                    ui.separator();
+
+                    // Power pins configuration
+                    if !self.voltage_config.power_pins.is_empty() {
+                        ui.label("Power Pins:");
+                        for (pin_name, voltage) in &mut self.voltage_config.power_pins {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{}:", pin_name));
+                                ui.add(
+                                    egui::DragValue::new(voltage)
+                                        .speed(0.01)
+                                        .range(0.0..=5.0)
+                                        .fixed_decimals(2)
+                                        .suffix(" V"),
+                                );
+                            });
+                        }
+                        ui.separator();
+                    }
+
+                    // Ground pins configuration
+                    if !self.voltage_config.ground_pins.is_empty() {
+                        ui.label("Ground Pins:");
+                        for (pin_name, voltage) in &mut self.voltage_config.ground_pins {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{}:", pin_name));
+                                ui.add(
+                                    egui::DragValue::new(voltage)
+                                        .speed(0.01)
+                                        .range(-2.0..=2.0)
+                                        .fixed_decimals(2)
+                                        .suffix(" V"),
+                                );
+                            });
+                        }
+                        ui.separator();
+                    }
+
+                    // Related power/ground pin selection
+                    if self.voltage_config.power_pins.len() > 1 {
+                        ui.horizontal(|ui| {
+                            ui.label("Default Related Power Pin:");
+                            egui::ComboBox::from_id_source("related_power")
+                                .selected_text(&self.voltage_config.selected_related_power)
+                                .show_ui(ui, |ui| {
+                                    for pin_name in self.voltage_config.power_pins.keys() {
+                                        ui.selectable_value(
+                                            &mut self.voltage_config.selected_related_power,
+                                            pin_name.clone(),
+                                            pin_name,
+                                        );
+                                    }
+                                });
+                        });
+                    }
+
+                    if self.voltage_config.ground_pins.len() > 1 {
+                        ui.horizontal(|ui| {
+                            ui.label("Default Related Ground Pin:");
+                            egui::ComboBox::from_id_source("related_ground")
+                                .selected_text(&self.voltage_config.selected_related_ground)
+                                .show_ui(ui, |ui| {
+                                    for pin_name in self.voltage_config.ground_pins.keys() {
+                                        ui.selectable_value(
+                                            &mut self.voltage_config.selected_related_ground,
+                                            pin_name.clone(),
+                                            pin_name,
+                                        );
+                                    }
+                                });
+                        });
+                    }
+
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Export").clicked() {
+                            self.show_voltage_dialog = false;
+                            self.perform_lib_export();
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.show_voltage_dialog = false;
                         }
                     });
                 });

@@ -9,6 +9,28 @@ use std::io::Write;
 
 use crate::lef::{Lef, LefMacro, LefPin};
 
+/// Voltage configuration for Liberty export
+#[derive(Debug, Clone)]
+pub struct VoltageConfig {
+    pub power_pins: std::collections::BTreeMap<String, f32>, // power pin name -> voltage
+    pub ground_pins: std::collections::BTreeMap<String, f32>, // ground pin name -> voltage
+    pub selected_related_power: String,                      // default related power pin
+    pub selected_related_ground: String,                     // default related ground pin
+    pub nom_voltage: f32,                                    // nominal voltage
+}
+
+impl Default for VoltageConfig {
+    fn default() -> Self {
+        Self {
+            power_pins: std::collections::BTreeMap::new(),
+            ground_pins: std::collections::BTreeMap::new(),
+            selected_related_power: String::new(),
+            selected_related_ground: String::new(),
+            nom_voltage: 1.1,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct PinCsvRecord {
     #[serde(rename = "Name")]
@@ -384,44 +406,105 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
     }
 }
 
-/// Generate Liberty pin definition for a pin group
-fn generate_lib_pin_definition(pin_group: &[&LefPin]) -> String {
+/// Generate Liberty pin definition for a pin group with voltage configuration
+fn generate_lib_pin_definition_with_config(
+    pin_group: &[&LefPin],
+    voltage_config: &VoltageConfig,
+) -> String {
     if pin_group.len() == 1 {
         // Single pin
         let pin = pin_group[0];
-        let direction = pin.direction.to_lowercase();
-        format!(
-            "   pin({})  {{\n           direction : {};\n           capacitance : 0.02;\n           related_power_pin : DVDD ;\n           related_ground_pin  : DVSS ;\n   }}\n",
-            pin.name, direction
-        )
+        let clean_name = clean_pin_name(&pin.name);
+
+        // Check if this is a power or ground pin
+        if is_power_pin(pin) {
+            // Generate pg_pin instead of regular pin
+            let pg_type = match pin.use_type.as_str() {
+                "POWER" => "primary_power",
+                "GROUND" => "primary_ground",
+                _ => "primary_power", // fallback
+            };
+            format!(
+                "   pg_pin({})  {{\n           voltage_name : {} ;\n           pg_type : {} ;\n   }}\n",
+                clean_name, clean_name, pg_type
+            )
+        } else {
+            // Regular signal pin
+            let direction = pin.direction.to_lowercase();
+            let related_power = if !voltage_config.selected_related_power.is_empty() {
+                &voltage_config.selected_related_power
+            } else {
+                "VDD"
+            };
+            let related_ground = if !voltage_config.selected_related_ground.is_empty() {
+                &voltage_config.selected_related_ground
+            } else {
+                "VSS"
+            };
+            format!(
+                "   pin({})  {{\n           direction : {};\n           capacitance : 0.02;\n           related_power_pin : {} ;\n           related_ground_pin  : {} ;\n   }}\n",
+                clean_name, direction, related_power, related_ground
+            )
+        }
     } else {
         // Bus pin
         let record = compress_bus_group(pin_group);
-        let direction = record.direction.to_lowercase();
-        let bus_type = get_bus_type_name(record.width);
+        let is_power = pin_group.iter().any(|pin| is_power_pin(pin));
 
-        // Extract base name from compressed name
-        let base_name = if let Some(bracket_start) = record.name.rfind('[') {
-            &record.name[..bracket_start]
+        if is_power {
+            // For power/ground bus pins, generate individual pg_pins
+            let mut result = String::new();
+            for pin in pin_group {
+                let clean_name = clean_pin_name(&pin.name);
+                let pg_type = match pin.use_type.as_str() {
+                    "POWER" => "primary_power",
+                    "GROUND" => "primary_ground",
+                    _ => "primary_power", // fallback
+                };
+                result.push_str(&format!(
+                    "   pg_pin({})  {{\n           voltage_name : {} ;\n           pg_type : {} ;\n   }}\n",
+                    clean_name, clean_name, pg_type
+                ));
+            }
+            result
         } else {
-            &record.name
-        };
+            // Regular signal bus
+            let direction = record.direction.to_lowercase();
+            let bus_type = get_bus_type_name(record.width);
+            let related_power = if !voltage_config.selected_related_power.is_empty() {
+                &voltage_config.selected_related_power
+            } else {
+                "VDD"
+            };
+            let related_ground = if !voltage_config.selected_related_ground.is_empty() {
+                &voltage_config.selected_related_ground
+            } else {
+                "VSS"
+            };
 
-        let mut result = format!(
-            "   bus({}) {{\n        bus_type       : \"{}\";\n        related_power_pin : DVDD ;\n        related_ground_pin  : DVSS ;\n\n",
-            base_name, bus_type
-        );
+            // Extract base name from compressed name
+            let base_name = if let Some(bracket_start) = record.name.rfind('[') {
+                &record.name[..bracket_start]
+            } else {
+                &record.name
+            };
 
-        // Generate individual pin definitions
-        for i in 0..record.width {
-            result.push_str(&format!(
-                "        pin ({}[{}]) {{\n        direction      : {};\n        capacitance    : 0.02;\n        }}\n\n",
-                base_name, i, direction
-            ));
+            let mut result = format!(
+                "   bus({}) {{\n        bus_type       : \"{}\";\n        related_power_pin : {} ;\n        related_ground_pin  : {} ;\n\n",
+                base_name, bus_type, related_power, related_ground
+            );
+
+            // Generate individual pin definitions
+            for i in 0..record.width {
+                result.push_str(&format!(
+                    "        pin ({}[{}]) {{\n        direction      : {};\n        capacitance    : 0.02;\n        }}\n\n",
+                    base_name, i, direction
+                ));
+            }
+
+            result.push_str(&format!("}}  /* end of bus {} */\n", base_name));
+            result
         }
-
-        result.push_str(&format!("}}  /* end of bus {} */\n", base_name));
-        result
     }
 }
 
@@ -490,8 +573,14 @@ pub fn export_verilog_stub(
     Ok(())
 }
 
-/// Export all LEF cells to Liberty stub file
-pub fn export_lib_stub(lef_data: &Lef, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+/// Export all LEF cells to Liberty stub file with voltage configuration (old implementation)
+#[allow(dead_code)]
+pub fn export_lib_stub_with_voltage(
+    lef_data: &Lef,
+    file_path: &str,
+    power_voltage: f32,
+    ground_voltage: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(file_path)?;
 
     // Generate library header
@@ -594,11 +683,32 @@ pub fn export_lib_stub(lef_data: &Lef, file_path: &str) -> Result<(), Box<dyn st
     writeln!(file, "/* ****  Cell Description  **** */")?;
     writeln!(file, "/* **************************** */")?;
 
-    // Standard voltage mapping
-    writeln!(file, "    voltage_map(DVDD   , 1.1);")?;
-    writeln!(file, "    voltage_map(AVDD   , 1.1);")?;
-    writeln!(file, "    voltage_map(DVSS   , 0);")?;
-    writeln!(file, "    voltage_map(AVSS   , 0);")?;
+    // Collect all unique power and ground pins
+    let mut power_pins = std::collections::BTreeSet::new();
+    let mut ground_pins = std::collections::BTreeSet::new();
+
+    for macro_def in &lef_data.macros {
+        for pin in &macro_def.pins {
+            match pin.use_type.as_str() {
+                "POWER" => {
+                    power_pins.insert(clean_pin_name(&pin.name));
+                }
+                "GROUND" => {
+                    ground_pins.insert(clean_pin_name(&pin.name));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Generate dynamic voltage mapping
+    writeln!(file, "/* Voltage Mapping */")?;
+    for power_pin in &power_pins {
+        writeln!(file, "    voltage_map({}, {});", power_pin, power_voltage)?;
+    }
+    for ground_pin in &ground_pins {
+        writeln!(file, "    voltage_map({}, {});", ground_pin, ground_voltage)?;
+    }
     writeln!(file)?;
 
     // Generate cell for each macro
@@ -611,38 +721,23 @@ pub fn export_lib_stub(lef_data: &Lef, file_path: &str) -> Result<(), Box<dyn st
         writeln!(file, "   map_only        : true;")?;
         writeln!(file)?;
 
-        // Standard power pins
-        writeln!(file, "   pg_pin(AVDD)  {{")?;
-        writeln!(file, "           voltage_name : AVDD ;")?;
-        writeln!(file, "           pg_type : primary_power ;")?;
-        writeln!(file, "   }}")?;
-        writeln!(file)?;
-
-        writeln!(file, "   pg_pin(AVSS)  {{")?;
-        writeln!(file, "           voltage_name : AVSS ;")?;
-        writeln!(file, "           pg_type : primary_ground ;")?;
-        writeln!(file, "   }}")?;
-        writeln!(file)?;
-
-        writeln!(file, "   pg_pin(DVDD)  {{")?;
-        writeln!(file, "           voltage_name : DVDD ;")?;
-        writeln!(file, "           pg_type : primary_power ;")?;
-        writeln!(file, "   }}")?;
-        writeln!(file)?;
-
-        writeln!(file, "   pg_pin(DVSS)  {{")?;
-        writeln!(file, "           voltage_name : DVSS ;")?;
-        writeln!(file, "           pg_type : primary_ground ;")?;
-        writeln!(file, "   }}")?;
-        writeln!(file)?;
-
         // Sort pins by type priority before generating pin definitions
         let mut sorted_pins = macro_def.pins.clone();
         sort_pins_by_type(&mut sorted_pins);
 
         let groups = group_pins_by_bus(&sorted_pins);
         for group in groups {
-            let pin_def = generate_lib_pin_definition(&group);
+            // Create a default voltage config for backward compatibility
+            let mut default_config = VoltageConfig::default();
+            default_config
+                .power_pins
+                .insert("VDD".to_string(), power_voltage);
+            default_config
+                .ground_pins
+                .insert("VSS".to_string(), ground_voltage);
+            default_config.selected_related_power = "VDD".to_string();
+            default_config.selected_related_ground = "VSS".to_string();
+            let pin_def = generate_lib_pin_definition_with_config(&group, &default_config);
             write!(file, "{}", pin_def)?;
         }
 
@@ -654,4 +749,160 @@ pub fn export_lib_stub(lef_data: &Lef, file_path: &str) -> Result<(), Box<dyn st
     writeln!(file, "}}  /* end of library */")?;
 
     Ok(())
+}
+
+/// Export all LEF cells to Liberty stub file with voltage configuration
+pub fn export_lib_stub_with_voltage_config(
+    lef_data: &Lef,
+    file_path: &str,
+    voltage_config: &VoltageConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut file = File::create(file_path)?;
+
+    // Generate library header
+    writeln!(file, "library (lef_cells)  {{")?;
+    writeln!(file)?;
+    writeln!(file, "/* General Library Attributes */")?;
+    writeln!(file)?;
+    writeln!(file, "  technology (cmos) ;")?;
+    writeln!(file, "  delay_model      : table_lookup;")?;
+    writeln!(file, "  bus_naming_style : \"%s[%d]\";")?;
+    writeln!(file, "  simulation  : true;")?;
+    writeln!(file)?;
+    writeln!(file)?;
+
+    // Unit Definition
+    writeln!(file, "/* Unit Definition */")?;
+    writeln!(file)?;
+    writeln!(file, "  time_unit               : \"1ns\";")?;
+    writeln!(file, "  voltage_unit            : \"1V\";")?;
+    writeln!(file, "  current_unit            : \"1mA\";")?;
+    writeln!(file, "  capacitive_load_unit (1,pf);")?;
+    writeln!(file, "  pulling_resistance_unit : \"1kohm\";")?;
+    writeln!(file)?;
+
+    // Power estimation settings
+    writeln!(file, "/* Added for DesignPower (Power Estimation). */")?;
+    writeln!(file, "  leakage_power_unit : 1pW;")?;
+    writeln!(file, "  default_cell_leakage_power : 1;")?;
+    writeln!(file)?;
+
+    // Threshold settings
+    writeln!(file, "slew_lower_threshold_pct_rise :  10 ;")?;
+    writeln!(file, "slew_upper_threshold_pct_rise :  90 ;")?;
+    writeln!(file, "input_threshold_pct_fall      :  50 ;")?;
+    writeln!(file, "output_threshold_pct_fall     :  50 ;")?;
+    writeln!(file, "input_threshold_pct_rise      :  50 ;")?;
+    writeln!(file, "output_threshold_pct_rise     :  50 ;")?;
+    writeln!(file, "slew_lower_threshold_pct_fall :  10 ;")?;
+    writeln!(file, "slew_upper_threshold_pct_fall :  90 ;")?;
+    writeln!(file, "slew_derate_from_library      :  1.0 ;")?;
+    writeln!(file)?;
+    writeln!(file)?;
+
+    // User supplied nominals
+    writeln!(file, "/****************************/")?;
+    writeln!(file, "/** user supplied nominals **/")?;
+    writeln!(file, "/****************************/")?;
+    writeln!(file)?;
+    writeln!(file, "nom_voltage     : {:.3};", voltage_config.nom_voltage)?;
+    writeln!(file, "nom_temperature : 25.000;")?;
+    writeln!(file, "nom_process     : 1.000;")?;
+    writeln!(file)?;
+
+    // Operating conditions
+    writeln!(file, "operating_conditions(\"typical\"){{")?;
+    writeln!(file, "process :   1.0")?;
+    writeln!(file, "temperature :  25")?;
+    writeln!(file, "voltage :      {:.2}", voltage_config.nom_voltage)?;
+    writeln!(file, "tree_type : \"balanced_tree\"")?;
+    writeln!(file, "}}")?;
+    writeln!(file)?;
+    writeln!(file, "default_operating_conditions  : typical")?;
+    writeln!(file)?;
+    writeln!(file)?;
+
+    // User supplied defaults
+    writeln!(file, "/****************************/")?;
+    writeln!(file, "/** user supplied defaults **/")?;
+    writeln!(file, "/****************************/")?;
+    writeln!(file)?;
+    writeln!(file, "default_inout_pin_cap           :       0.0100;")?;
+    writeln!(file, "default_input_pin_cap           :       0.0100;")?;
+    writeln!(file, "default_output_pin_cap          :       0.0000;")?;
+    writeln!(file, "default_fanout_load             :       1.0000;")?;
+    writeln!(file)?;
+    writeln!(file)?;
+
+    // Generate type declarations
+    let bus_widths = collect_bus_widths(lef_data);
+    if !bus_widths.is_empty() {
+        writeln!(file, "/* Type declarations */")?;
+        writeln!(file)?;
+
+        for width in bus_widths {
+            if width > 1 {
+                writeln!(file, "  type ({})  {{", get_bus_type_name(width))?;
+                writeln!(file, "    base_type : array;")?;
+                writeln!(file, "    data_type : bit;")?;
+                writeln!(file, "    bit_width : {};", width)?;
+                writeln!(file, "    bit_from  : {};", width - 1)?;
+                writeln!(file, "    bit_to    : 0;")?;
+                writeln!(file, "    downto    : true;")?;
+                writeln!(file, "  }}")?;
+                writeln!(file)?;
+            }
+        }
+        writeln!(file)?;
+    }
+
+    // Cell descriptions
+    writeln!(file, "/* **************************** */")?;
+    writeln!(file, "/* ****  Cell Description  **** */")?;
+    writeln!(file, "/* **************************** */")?;
+
+    // Generate voltage mapping
+    for (power_pin, voltage) in &voltage_config.power_pins {
+        writeln!(file, "    voltage_map({}, {});", power_pin, voltage)?;
+    }
+    for (ground_pin, voltage) in &voltage_config.ground_pins {
+        writeln!(file, "    voltage_map({}, {});", ground_pin, voltage)?;
+    }
+    writeln!(file)?;
+
+    // Generate cell for each macro
+    for macro_def in &lef_data.macros {
+        writeln!(file, "cell ({})  {{", macro_def.name)?;
+        writeln!(file)?;
+        writeln!(file, "   area            : 100;")?;
+        writeln!(file, "   dont_touch      : true;")?;
+        writeln!(file, "   dont_use        : true;")?;
+        writeln!(file, "   map_only        : true;")?;
+        writeln!(file)?;
+
+        // Sort pins by type priority before generating pin definitions
+        let mut sorted_pins = macro_def.pins.clone();
+        sort_pins_by_type(&mut sorted_pins);
+
+        let groups = group_pins_by_bus(&sorted_pins);
+        for group in groups {
+            let pin_def = generate_lib_pin_definition_with_config(&group, voltage_config);
+            write!(file, "{}", pin_def)?;
+        }
+
+        writeln!(file, "}}  /* end of cell {} */", macro_def.name)?;
+        writeln!(file)?;
+    }
+
+    // Close library
+    writeln!(file, "}}  /* end of library */")?;
+
+    Ok(())
+}
+
+/// Export all LEF cells to Liberty stub file (backward compatibility)
+#[allow(dead_code)]
+pub fn export_lib_stub(lef_data: &Lef, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let default_config = VoltageConfig::default();
+    export_lib_stub_with_voltage_config(lef_data, file_path, &default_config)
 }
