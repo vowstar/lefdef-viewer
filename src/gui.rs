@@ -835,6 +835,13 @@ impl LefDefViewer {
 
                 self.lef_data = Some(lef);
                 self.lef_file_path = Some(path);
+
+                // Initialize voltage configuration with smart defaults
+                let basename = self.get_lef_basename();
+                self.voltage_config.lib_name = basename;
+                if let Some(lef_data) = &self.lef_data {
+                    VoltageDialog::initialize_config(lef_data, &mut self.voltage_config);
+                }
                 self.error_message = None;
                 // Auto-show layers panel when LEF file is loaded successfully
                 self.show_layers_panel = true;
@@ -996,10 +1003,11 @@ impl LefDefViewer {
     }
 
     fn handle_export_lib_stub(&mut self) {
-        if let Some(lef_data) = &self.lef_data {
+        if let Some(_lef_data) = &self.lef_data {
+            // Voltage config is already initialized when LEF file was loaded
+            // Just ensure lib_name is up to date and show dialog
             let basename = self.get_lef_basename();
             self.voltage_config.lib_name = basename;
-            VoltageDialog::initialize_config(lef_data, &mut self.voltage_config);
             self.voltage_dialog.show();
         }
     }

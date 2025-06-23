@@ -69,6 +69,213 @@ fn sort_pins_by_type(pins: &mut [LefPin]) {
     pins.sort_by_key(|pin| (get_pin_sort_priority(pin), pin.name.clone()));
 }
 
+/// Select the best default power pin based on naming conventions
+/// Priority: exact match "VDD"/"vdd" > contains VDD/vdd > first available
+fn select_default_power_pin<'a>(power_pins: impl Iterator<Item = &'a String>) -> Option<String> {
+    let pins: Vec<&String> = power_pins.collect();
+
+    // Priority 1: Exact match for VDD/vdd
+    for pin in &pins {
+        if pin.as_str() == "VDD" || pin.as_str() == "vdd" {
+            return Some((*pin).clone());
+        }
+    }
+
+    // Priority 2: Contains VDD/vdd
+    for pin in &pins {
+        let pin_upper = pin.to_uppercase();
+        if pin_upper.contains("VDD") {
+            return Some((*pin).clone());
+        }
+    }
+
+    // Priority 3: First available pin
+    pins.first().map(|pin| (*pin).clone())
+}
+
+/// Select the best default ground pin based on naming conventions  
+/// Priority: exact match "VSS"/"vss" > contains VSS/vss > first available
+fn select_default_ground_pin<'a>(ground_pins: impl Iterator<Item = &'a String>) -> Option<String> {
+    let pins: Vec<&String> = ground_pins.collect();
+
+    // Priority 1: Exact match for VSS/vss
+    for pin in &pins {
+        if pin.as_str() == "VSS" || pin.as_str() == "vss" {
+            return Some((*pin).clone());
+        }
+    }
+
+    // Priority 2: Contains VSS/vss
+    for pin in &pins {
+        let pin_upper = pin.to_uppercase();
+        if pin_upper.contains("VSS") {
+            return Some((*pin).clone());
+        }
+    }
+
+    // Priority 3: First available pin
+    pins.first().map(|pin| (*pin).clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_smart_power_pin_selection() {
+        // Test exact match VDD
+        let pins = vec![
+            "POWER_1".to_string(),
+            "VDD".to_string(),
+            "POWER_2".to_string(),
+        ];
+        assert_eq!(
+            select_default_power_pin(pins.iter()),
+            Some("VDD".to_string())
+        );
+
+        // Test exact match vdd
+        let pins = vec![
+            "POWER_1".to_string(),
+            "vdd".to_string(),
+            "POWER_2".to_string(),
+        ];
+        assert_eq!(
+            select_default_power_pin(pins.iter()),
+            Some("vdd".to_string())
+        );
+
+        // Test contains VDD
+        let pins = vec![
+            "POWER_1".to_string(),
+            "VDD_CORE".to_string(),
+            "POWER_2".to_string(),
+        ];
+        assert_eq!(
+            select_default_power_pin(pins.iter()),
+            Some("VDD_CORE".to_string())
+        );
+
+        // Test contains vdd (case insensitive)
+        let pins = vec![
+            "POWER_1".to_string(),
+            "vdd_io".to_string(),
+            "POWER_2".to_string(),
+        ];
+        assert_eq!(
+            select_default_power_pin(pins.iter()),
+            Some("vdd_io".to_string())
+        );
+
+        // Test fallback to first pin
+        let pins = vec!["POWER_A".to_string(), "POWER_B".to_string()];
+        assert_eq!(
+            select_default_power_pin(pins.iter()),
+            Some("POWER_A".to_string())
+        );
+
+        // Test empty list
+        let pins: Vec<String> = vec![];
+        assert_eq!(select_default_power_pin(pins.iter()), None);
+    }
+
+    #[test]
+    fn test_smart_ground_pin_selection() {
+        // Test exact match VSS
+        let pins = vec!["GND_1".to_string(), "VSS".to_string(), "GND_2".to_string()];
+        assert_eq!(
+            select_default_ground_pin(pins.iter()),
+            Some("VSS".to_string())
+        );
+
+        // Test exact match vss
+        let pins = vec!["GND_1".to_string(), "vss".to_string(), "GND_2".to_string()];
+        assert_eq!(
+            select_default_ground_pin(pins.iter()),
+            Some("vss".to_string())
+        );
+
+        // Test contains VSS
+        let pins = vec![
+            "GND_1".to_string(),
+            "VSS_CORE".to_string(),
+            "GND_2".to_string(),
+        ];
+        assert_eq!(
+            select_default_ground_pin(pins.iter()),
+            Some("VSS_CORE".to_string())
+        );
+
+        // Test contains vss (case insensitive)
+        let pins = vec![
+            "GND_1".to_string(),
+            "vss_io".to_string(),
+            "GND_2".to_string(),
+        ];
+        assert_eq!(
+            select_default_ground_pin(pins.iter()),
+            Some("vss_io".to_string())
+        );
+
+        // Test fallback to first pin
+        let pins = vec!["GND_A".to_string(), "GND_B".to_string()];
+        assert_eq!(
+            select_default_ground_pin(pins.iter()),
+            Some("GND_A".to_string())
+        );
+
+        // Test empty list
+        let pins: Vec<String> = vec![];
+        assert_eq!(select_default_ground_pin(pins.iter()), None);
+    }
+
+    #[test]
+    fn test_initialize_config_single_pin() {
+        use crate::export::VoltageConfig;
+        use crate::lef::{Lef, LefMacro, LefPin};
+
+        // Create a test LEF with single VDD and VSS pins
+        let lef = Lef {
+            macros: vec![LefMacro {
+                name: "TEST_MACRO".to_string(),
+                class: "CORE".to_string(),
+                foreign: String::new(),
+                origin: (0.0, 0.0),
+                size_x: 1.0,
+                size_y: 1.0,
+                symmetry: Vec::new(),
+                site: String::new(),
+                pins: vec![
+                    LefPin {
+                        name: "VDD".to_string(),
+                        use_type: "POWER".to_string(),
+                        direction: "INOUT".to_string(),
+                        shape: "ABUTMENT".to_string(),
+                        ports: Vec::new(),
+                    },
+                    LefPin {
+                        name: "VSS".to_string(),
+                        use_type: "GROUND".to_string(),
+                        direction: "INOUT".to_string(),
+                        shape: "ABUTMENT".to_string(),
+                        ports: Vec::new(),
+                    },
+                ],
+                obs: Vec::new(),
+            }],
+        };
+
+        let mut config = VoltageConfig::default();
+        VoltageDialog::initialize_config(&lef, &mut config);
+
+        // Verify that VDD and VSS are selected as defaults
+        assert_eq!(config.selected_related_power, "VDD");
+        assert_eq!(config.selected_related_ground, "VSS");
+        assert!(config.power_pins.contains_key("VDD"));
+        assert!(config.ground_pins.contains_key("VSS"));
+    }
+}
+
 /// Group pins by bus base name and validate bus constraints
 fn group_pins_by_bus(pins: &[LefPin]) -> Vec<Vec<&LefPin>> {
     let mut base_name_groups: BTreeMap<String, Vec<&LefPin>> = BTreeMap::new();
@@ -237,18 +444,32 @@ impl VoltageDialog {
         voltage_config.pin_filter.clear();
 
         // Set default voltages for all power pins
-        for power_pin in power_pins {
+        for power_pin in &power_pins {
             voltage_config.power_pins.insert(power_pin.clone(), 0.8);
-            if voltage_config.selected_related_power.is_empty() {
-                voltage_config.selected_related_power = power_pin;
-            }
         }
 
         // Set default voltages for all ground pins
-        for ground_pin in ground_pins {
+        for ground_pin in &ground_pins {
             voltage_config.ground_pins.insert(ground_pin.clone(), 0.0);
-            if voltage_config.selected_related_ground.is_empty() {
-                voltage_config.selected_related_ground = ground_pin;
+        }
+
+        // Smart selection of default related power pin (VDD/vdd priority)
+        if let Some(default_power) = select_default_power_pin(power_pins.iter()) {
+            voltage_config.selected_related_power = default_power;
+        } else {
+            // Fallback: if no smart selection worked, use first available power pin
+            if let Some(first_power) = power_pins.iter().next() {
+                voltage_config.selected_related_power = first_power.clone();
+            }
+        }
+
+        // Smart selection of default related ground pin (VSS/vss priority)
+        if let Some(default_ground) = select_default_ground_pin(ground_pins.iter()) {
+            voltage_config.selected_related_ground = default_ground;
+        } else {
+            // Fallback: if no smart selection worked, use first available ground pin
+            if let Some(first_ground) = ground_pins.iter().next() {
+                voltage_config.selected_related_ground = first_ground.clone();
             }
         }
 
@@ -350,34 +571,44 @@ impl VoltageDialog {
 
                 // Related power/ground pin selection
                 ui.horizontal(|ui| {
-                    if voltage_config.power_pins.len() > 1 {
+                    if !voltage_config.power_pins.is_empty() {
                         ui.label("Default Related Power Pin:");
-                        egui::ComboBox::from_id_salt("related_power")
-                            .selected_text(&voltage_config.selected_related_power)
-                            .show_ui(ui, |ui| {
-                                for pin_name in voltage_config.power_pins.keys() {
-                                    ui.selectable_value(
-                                        &mut voltage_config.selected_related_power,
-                                        pin_name.clone(),
-                                        pin_name,
-                                    );
-                                }
-                            });
+                        if voltage_config.power_pins.len() > 1 {
+                            egui::ComboBox::from_id_salt("related_power")
+                                .selected_text(&voltage_config.selected_related_power)
+                                .show_ui(ui, |ui| {
+                                    for pin_name in voltage_config.power_pins.keys() {
+                                        ui.selectable_value(
+                                            &mut voltage_config.selected_related_power,
+                                            pin_name.clone(),
+                                            pin_name,
+                                        );
+                                    }
+                                });
+                        } else {
+                            // Show selected pin name when only one option available
+                            ui.label(&voltage_config.selected_related_power);
+                        }
                     }
 
-                    if voltage_config.ground_pins.len() > 1 {
+                    if !voltage_config.ground_pins.is_empty() {
                         ui.label("Default Related Ground Pin:");
-                        egui::ComboBox::from_id_salt("related_ground")
-                            .selected_text(&voltage_config.selected_related_ground)
-                            .show_ui(ui, |ui| {
-                                for pin_name in voltage_config.ground_pins.keys() {
-                                    ui.selectable_value(
-                                        &mut voltage_config.selected_related_ground,
-                                        pin_name.clone(),
-                                        pin_name,
-                                    );
-                                }
-                            });
+                        if voltage_config.ground_pins.len() > 1 {
+                            egui::ComboBox::from_id_salt("related_ground")
+                                .selected_text(&voltage_config.selected_related_ground)
+                                .show_ui(ui, |ui| {
+                                    for pin_name in voltage_config.ground_pins.keys() {
+                                        ui.selectable_value(
+                                            &mut voltage_config.selected_related_ground,
+                                            pin_name.clone(),
+                                            pin_name,
+                                        );
+                                    }
+                                });
+                        } else {
+                            // Show selected pin name when only one option available
+                            ui.label(&voltage_config.selected_related_ground);
+                        }
                     }
                 });
                 ui.separator();
@@ -477,8 +708,13 @@ impl VoltageDialog {
                     ui.label("Batch Assignment for Selected Pins:");
                     ui.horizontal(|ui| {
                         ui.label("Set Related Power:");
+                        let batch_power_text = if voltage_config.selected_related_power.is_empty() {
+                            "Select Power Pin"
+                        } else {
+                            &voltage_config.selected_related_power
+                        };
                         egui::ComboBox::from_id_salt("batch_power")
-                            .selected_text("Select Power Pin")
+                            .selected_text(batch_power_text)
                             .show_ui(ui, |ui| {
                                 for pin_name in voltage_config.power_pins.keys() {
                                     if ui.selectable_label(false, pin_name).clicked() {
@@ -492,8 +728,14 @@ impl VoltageDialog {
                             });
 
                         ui.label("Set Related Ground:");
+                        let batch_ground_text = if voltage_config.selected_related_ground.is_empty()
+                        {
+                            "Select Ground Pin"
+                        } else {
+                            &voltage_config.selected_related_ground
+                        };
                         egui::ComboBox::from_id_salt("batch_ground")
-                            .selected_text("Select Ground Pin")
+                            .selected_text(batch_ground_text)
                             .show_ui(ui, |ui| {
                                 for pin_name in voltage_config.ground_pins.keys() {
                                     if ui.selectable_label(false, pin_name).clicked() {
