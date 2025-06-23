@@ -9,7 +9,6 @@
 //! - Real-world DEF file scenarios
 
 use lefdef_viewer::def::def_parser;
-use lefdef_viewer::def::parser::ContinuationResult;
 use lefdef_viewer::def::parser::DefItemParser;
 use lefdef_viewer::def::reader::DefReader;
 use std::fs;
