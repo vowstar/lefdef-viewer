@@ -9,6 +9,7 @@ use crate::def::{reader::DefReader, Def};
 use crate::export::{self, VoltageConfig};
 use crate::lef::{reader::LefReader, Lef};
 use crate::voltage_dialog::VoltageDialog;
+use std::path::Path;
 
 /// Edge proximity detection result
 #[derive(Debug, Clone)]
@@ -864,10 +865,24 @@ impl LefDefViewer {
         }
     }
 
+    /// Extract basename from LEF file path for use in export filenames
+    fn get_lef_basename(&self) -> String {
+        if let Some(lef_path) = &self.lef_file_path {
+            if let Some(file_stem) = Path::new(lef_path).file_stem() {
+                if let Some(basename) = file_stem.to_str() {
+                    return basename.to_string();
+                }
+            }
+        }
+        "lef_cells".to_string() // fallback default
+    }
+
     fn handle_export_lef_csv(&mut self) {
         if let Some(lef_data) = &self.lef_data {
+            let basename = self.get_lef_basename();
+            let default_filename = format!("{}.csv", basename);
             if let Some(file_path) = FileDialog::new()
-                .set_file_name("lef_macros.csv")
+                .set_file_name(&default_filename)
                 .add_filter("CSV files", &["csv"])
                 .save_file()
             {
@@ -957,8 +972,10 @@ impl LefDefViewer {
 
     fn handle_export_verilog_stub(&mut self) {
         if let Some(lef_data) = &self.lef_data {
+            let basename = self.get_lef_basename();
+            let default_filename = format!("{}.v", basename);
             if let Some(file_path) = FileDialog::new()
-                .set_file_name("lef_cells.v")
+                .set_file_name(&default_filename)
                 .add_filter("Verilog files", &["v"])
                 .save_file()
             {
@@ -980,6 +997,8 @@ impl LefDefViewer {
 
     fn handle_export_lib_stub(&mut self) {
         if let Some(lef_data) = &self.lef_data {
+            let basename = self.get_lef_basename();
+            self.voltage_config.lib_name = basename;
             VoltageDialog::initialize_config(lef_data, &mut self.voltage_config);
             self.voltage_dialog.show();
         }
@@ -987,8 +1006,9 @@ impl LefDefViewer {
 
     fn perform_lib_export(&mut self) {
         if let Some(lef_data) = &self.lef_data {
+            let default_filename = format!("{}.lib", self.voltage_config.lib_name);
             if let Some(file_path) = FileDialog::new()
-                .set_file_name("lef_cells.lib")
+                .set_file_name(&default_filename)
                 .add_filter("Liberty files", &["lib"])
                 .save_file()
             {

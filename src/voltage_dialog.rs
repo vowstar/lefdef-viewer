@@ -304,6 +304,12 @@ impl VoltageDialog {
                             .fixed_decimals(2),
                     );
                 });
+
+                // Library name configuration
+                ui.horizontal(|ui| {
+                    ui.label("Library Name:");
+                    ui.text_edit_singleline(&mut voltage_config.lib_name);
+                });
                 ui.separator();
 
                 // Power pins configuration

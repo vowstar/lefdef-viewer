@@ -17,6 +17,7 @@ pub struct VoltageConfig {
     pub selected_related_power: String,                      // default related power pin
     pub selected_related_ground: String,                     // default related ground pin
     pub nom_voltage: f32,                                    // nominal voltage
+    pub lib_name: String,                                    // library name for .lib export
     // Pin-specific related power/ground configuration
     pub pin_related_power: std::collections::BTreeMap<String, String>, // pin_name -> related_power_pin
     pub pin_related_ground: std::collections::BTreeMap<String, String>, // pin_name -> related_ground_pin
@@ -33,6 +34,7 @@ impl Default for VoltageConfig {
             selected_related_power: String::new(),
             selected_related_ground: String::new(),
             nom_voltage: 0.8, // Changed from 1.1 to 0.8
+            lib_name: "lef_cells".to_string(),
             pin_related_power: std::collections::BTreeMap::new(),
             pin_related_ground: std::collections::BTreeMap::new(),
             selected_pins: std::collections::BTreeSet::new(),
@@ -625,11 +627,12 @@ pub fn export_lib_stub_with_voltage(
     file_path: &str,
     power_voltage: f32,
     ground_voltage: f32,
+    lib_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(file_path)?;
 
     // Generate library header
-    writeln!(file, "library (lef_cells)  {{")?;
+    writeln!(file, "library ({})  {{", lib_name)?;
     writeln!(file)?;
     writeln!(file, "/* General Library Attributes */")?;
     writeln!(file)?;
@@ -805,7 +808,7 @@ pub fn export_lib_stub_with_voltage_config(
     let mut file = File::create(file_path)?;
 
     // Generate library header
-    writeln!(file, "library (lef_cells)  {{")?;
+    writeln!(file, "library ({})  {{", voltage_config.lib_name)?;
     writeln!(file)?;
     writeln!(file, "/* General Library Attributes */")?;
     writeln!(file)?;
