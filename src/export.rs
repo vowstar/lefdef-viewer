@@ -376,11 +376,14 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
 
         if is_power {
             format!(
-                "`ifdef PG_EXIST\n    {} {}    /**< {} */\n`endif /* PG_EXIST */",
+                "`ifdef PG_EXIST\n    {} {},       /**< {} */\n`endif  /* PG_EXIST */",
                 direction, clean_name, clean_name
             )
         } else {
-            format!("    {} {}    /**< {} */", direction, clean_name, clean_name)
+            format!(
+                "    {} {},       /**< {} */",
+                direction, clean_name, clean_name
+            )
         }
     } else {
         // Bus pin - use existing compression logic
@@ -400,11 +403,14 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
             let base_name = &clean_name[..bracket_start];
             let range_part = &clean_name[bracket_start..];
             format!(
-                "    {} {} {}    /**< {} */",
+                "    {} {} {},  /**< {} */",
                 direction, range_part, base_name, clean_name
             )
         } else {
-            format!("    {} {}    /**< {} */", direction, clean_name, clean_name)
+            format!(
+                "    {} {},       /**< {} */",
+                direction, clean_name, clean_name
+            )
         };
 
         if is_power {
@@ -559,12 +565,14 @@ fn generate_lib_pin_definition_with_config(
 pub fn export_verilog_stub(
     lef_data: &Lef,
     file_path: &str,
+    basename: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(file_path)?;
+    let guard_name = format!("DEF_{}", basename.to_uppercase());
 
     // Generate file header
     writeln!(file, "/**")?;
-    writeln!(file, " * @file lef_cells.v")?;
+    writeln!(file, " * @file {}.v", basename)?;
     writeln!(file, " * @brief Verilog stub file for LEF cells")?;
     writeln!(file, " *")?;
     writeln!(
@@ -577,11 +585,16 @@ pub fn export_verilog_stub(
     )?;
     writeln!(file, " * NOTE: Auto-generated file, do not edit manually.")?;
     writeln!(file, " */")?;
+    writeln!(file, "`timescale 1ns / 1ps")?;
+    writeln!(file, "`ifndef {}", guard_name)?;
+    writeln!(file, "`define {}", guard_name)?;
     writeln!(file)?;
+    writeln!(file, "`ifndef SYNTHESIS")?;
 
     // Generate stub for each macro
     for macro_def in &lef_data.macros {
         // Generate module header comment
+        writeln!(file, "`celldefine")?;
         writeln!(file, "/**")?;
         writeln!(file, " * @brief {} module stub", macro_def.name)?;
         writeln!(file, " *")?;
@@ -591,8 +604,6 @@ pub fn export_verilog_stub(
             macro_def.name
         )?;
         writeln!(file, " */")?;
-
-        // Generate module declaration
         writeln!(file, "module {} (", macro_def.name)?;
 
         // Sort pins by type priority before generating port list
@@ -608,14 +619,32 @@ pub fn export_verilog_stub(
         }
 
         if !port_declarations.is_empty() {
-            writeln!(file, "{}", port_declarations.join(",\n"))?;
+            for (i, port_decl) in port_declarations.iter().enumerate() {
+                let is_last = i == port_declarations.len() - 1;
+                if is_last {
+                    // Remove trailing comma from the last port
+                    let port_without_comma = port_decl.trim_end_matches(',').trim_end();
+                    writeln!(file, "{}", port_without_comma)?;
+                } else {
+                    writeln!(file, "{}", port_decl)?;
+                }
+            }
         }
 
         writeln!(file, ");")?;
-        writeln!(file, "/* It is a stub, not a complete implementation */")?;
+        writeln!(
+            file,
+            "    /* It is a stub, not a complete implementation */"
+        )?;
         writeln!(file, "endmodule")?;
+        writeln!(file, "`endcelldefine")?;
         writeln!(file)?;
     }
+
+    writeln!(file, "`endif  /* SYNTHESIS */")?;
+    writeln!(file)?;
+    writeln!(file, "`endif  /* {} */", guard_name)?;
+    writeln!(file)?;
 
     Ok(())
 }

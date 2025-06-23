@@ -1215,7 +1215,8 @@ impl LefDefViewer {
                 .add_filter("Verilog files", &["v"])
                 .save_file()
             {
-                match export::export_verilog_stub(lef_data, &file_path.to_string_lossy()) {
+                match export::export_verilog_stub(lef_data, &file_path.to_string_lossy(), &basename)
+                {
                     Ok(()) => {
                         self.success_message = Some(format!(
                             "Successfully exported {} cells to Verilog stub file: {}",
