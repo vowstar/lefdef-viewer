@@ -10,6 +10,29 @@ use crate::export::{self, VoltageConfig};
 use crate::lef::{reader::LefReader, Lef};
 use crate::voltage_dialog::VoltageDialog;
 use std::path::Path;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+/// File loading state
+#[derive(Debug, Clone, Default)]
+enum LoadingState {
+    #[default]
+    Idle,
+    Loading {
+        file_type: String,
+        file_name: String,
+        start_time: Instant,
+        show_progress: bool,
+    },
+}
+
+/// File loading result message
+#[derive(Debug)]
+enum LoadingMessage {
+    LefLoaded(Result<Lef, String>, String), // Result and file path
+    DefLoaded(Box<Result<Def, String>>, String), // Result and file path
+}
 
 /// Edge proximity detection result
 #[derive(Debug, Clone)]
@@ -63,6 +86,9 @@ pub struct LefDefViewer {
     // Voltage configuration for Liberty export
     voltage_dialog: VoltageDialog,
     voltage_config: VoltageConfig,
+    // Async loading state
+    loading_state: LoadingState,
+    loading_receiver: Option<mpsc::Receiver<LoadingMessage>>,
 }
 
 impl LefDefViewer {
@@ -105,7 +131,146 @@ impl LefDefViewer {
             // Voltage configuration for Liberty export
             voltage_dialog: VoltageDialog::new(),
             voltage_config: VoltageConfig::default(),
+            // Async loading state
+            loading_state: LoadingState::Idle,
+            loading_receiver: None,
         }
+    }
+
+    fn check_loading_progress(&mut self, ctx: &egui::Context) {
+        // Check if we need to show progress bar (after 500ms)
+        if let LoadingState::Loading {
+            start_time,
+            show_progress,
+            ..
+        } = &mut self.loading_state
+        {
+            if !*show_progress && start_time.elapsed() >= Duration::from_millis(500) {
+                *show_progress = true;
+                ctx.request_repaint(); // Request UI update
+            }
+        }
+
+        // Check for loading completion messages
+        if let Some(receiver) = &self.loading_receiver {
+            match receiver.try_recv() {
+                Ok(message) => {
+                    self.loading_state = LoadingState::Idle;
+                    self.loading_receiver = None;
+
+                    match message {
+                        LoadingMessage::LefLoaded(result, path) => match result {
+                            Ok(lef) => {
+                                self.load_lef_file_sync(lef, path);
+                            }
+                            Err(error) => {
+                                self.error_message = Some(error);
+                            }
+                        },
+                        LoadingMessage::DefLoaded(result, path) => match *result {
+                            Ok(def) => {
+                                self.load_def_file_sync(def, path);
+                            }
+                            Err(error) => {
+                                self.error_message = Some(error);
+                            }
+                        },
+                    }
+                    ctx.request_repaint();
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    // No message yet, keep waiting
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    // Channel disconnected, reset state
+                    self.loading_state = LoadingState::Idle;
+                    self.loading_receiver = None;
+                    self.error_message = Some("File loading was interrupted".to_string());
+                    ctx.request_repaint();
+                }
+            }
+        }
+    }
+
+    fn load_lef_file_sync(&mut self, lef: Lef, path: String) {
+        // This is the synchronized version of LEF loading (after async completion)
+        // Update layer lists - collect all available layers with detailed type information
+        self.all_layers.clear();
+        self.visible_layers.clear();
+
+        // Add virtual layers
+        self.all_layers.insert("OUTLINE".to_string());
+        self.visible_layers.insert("OUTLINE".to_string());
+
+        // Add LABEL virtual layer for PIN text control
+        self.all_layers.insert("LABEL".to_string());
+        if self.show_pin_text {
+            self.visible_layers.insert("LABEL".to_string());
+        }
+
+        for macro_def in &lef.macros {
+            for pin in &macro_def.pins {
+                for port in &pin.ports {
+                    for rect in &port.rects {
+                        let detailed_layer = format!("{}.PIN", rect.layer);
+                        self.all_layers.insert(detailed_layer.clone());
+                        // Make power/ground pins visible by default
+                        if pin.use_type == "POWER" || pin.use_type == "GROUND" {
+                            self.visible_layers.insert(detailed_layer);
+                        }
+                    }
+                    for polygon in &port.polygons {
+                        let detailed_layer = format!("{}.PIN", polygon.layer);
+                        self.all_layers.insert(detailed_layer.clone());
+                        // Make power/ground pins visible by default
+                        if pin.use_type == "POWER" || pin.use_type == "GROUND" {
+                            self.visible_layers.insert(detailed_layer);
+                        }
+                    }
+                }
+            }
+
+            // Add obstruction layers
+            for obs in &macro_def.obs {
+                for rect in &obs.rects {
+                    let detailed_layer = format!("{}.OBS", rect.layer);
+                    self.all_layers.insert(detailed_layer);
+                    // OBS layers are hidden by default
+                }
+                for polygon in &obs.polygons {
+                    let detailed_layer = format!("{}.OBS", polygon.layer);
+                    self.all_layers.insert(detailed_layer);
+                    // OBS layers are hidden by default
+                }
+            }
+        }
+
+        self.lef_data = Some(lef);
+        self.lef_file_path = Some(path);
+
+        // Initialize voltage configuration with smart defaults
+        let basename = self.get_lef_basename();
+        self.voltage_config.lib_name = basename;
+        if let Some(lef_data) = &self.lef_data {
+            VoltageDialog::initialize_config(lef_data, &mut self.voltage_config);
+        }
+
+        self.error_message = None;
+        // Auto-show layers panel when LEF file is loaded successfully
+        self.show_layers_panel = true;
+        // Auto fit to view when LEF file is loaded successfully
+        // Delay fit to view by a few frames to ensure UI layout is stable
+        self.fit_to_view_delay_frames = 3;
+    }
+
+    fn load_def_file_sync(&mut self, def: Def, path: String) {
+        // This is the synchronized version of DEF loading (after async completion)
+        self.def_data = Some(def);
+        self.def_file_path = Some(path);
+        self.error_message = None;
+        // Auto fit to view when DEF file is loaded successfully
+        // Delay fit to view by a few frames to ensure UI layout is stable
+        self.fit_to_view_delay_frames = 3;
     }
 
     fn render_text_with_outline(
@@ -741,6 +906,38 @@ impl LefDefViewer {
         }
     }
 
+    fn start_lef_file_loading(&mut self, path: String) {
+        // Extract file name for display
+        let file_name = Path::new(&path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Set loading state
+        self.loading_state = LoadingState::Loading {
+            file_type: "LEF".to_string(),
+            file_name: file_name.clone(),
+            start_time: Instant::now(),
+            show_progress: false,
+        };
+
+        // Create channel for communication
+        let (tx, rx) = mpsc::channel();
+        self.loading_receiver = Some(rx);
+
+        // Start loading in background thread
+        thread::spawn(move || {
+            let reader = LefReader::new();
+            let result = match reader.read(&path) {
+                Ok(lef) => Ok(lef),
+                Err(e) => Err(format!("Failed to load LEF file: {}", e)),
+            };
+            let _ = tx.send(LoadingMessage::LefLoaded(result, path));
+        });
+    }
+
+    #[allow(dead_code)]
     fn load_lef_file(&mut self, path: String) {
         let reader = LefReader::new();
         match reader.read(&path) {
@@ -855,6 +1052,38 @@ impl LefDefViewer {
         }
     }
 
+    fn start_def_file_loading(&mut self, path: String) {
+        // Extract file name for display
+        let file_name = Path::new(&path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Set loading state
+        self.loading_state = LoadingState::Loading {
+            file_type: "DEF".to_string(),
+            file_name: file_name.clone(),
+            start_time: Instant::now(),
+            show_progress: false,
+        };
+
+        // Create channel for communication
+        let (tx, rx) = mpsc::channel();
+        self.loading_receiver = Some(rx);
+
+        // Start loading in background thread
+        thread::spawn(move || {
+            let reader = DefReader::new();
+            let result = match reader.read(&path) {
+                Ok(def) => Ok(def),
+                Err(e) => Err(format!("Failed to load DEF file: {}", e)),
+            };
+            let _ = tx.send(LoadingMessage::DefLoaded(Box::new(result), path));
+        });
+    }
+
+    #[allow(dead_code)]
     fn load_def_file(&mut self, path: String) {
         let reader = DefReader::new();
         match reader.read(&path) {
@@ -1048,7 +1277,7 @@ impl LefDefViewer {
                         .add_filter("LEF files", &["lef"])
                         .pick_file()
                     {
-                        self.load_lef_file(path.to_string_lossy().to_string());
+                        self.start_lef_file_loading(path.to_string_lossy().to_string());
                     }
                     ui.close_menu();
                 }
@@ -1058,7 +1287,7 @@ impl LefDefViewer {
                         .add_filter("DEF files", &["def"])
                         .pick_file()
                     {
-                        self.load_def_file(path.to_string_lossy().to_string());
+                        self.start_def_file_loading(path.to_string_lossy().to_string());
                     }
                     ui.close_menu();
                 }
@@ -2833,6 +3062,8 @@ impl LefDefViewer {
 
 impl eframe::App for LefDefViewer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Check loading progress and handle async messages
+        self.check_loading_progress(ctx);
         if let Some(error) = &self.error_message.clone() {
             egui::Window::new("Error")
                 .collapsible(false)
@@ -2880,6 +3111,25 @@ impl eframe::App for LefDefViewer {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             self.render_menu_bar(ui);
         });
+
+        // Show progress bar if loading and show_progress is true
+        if let LoadingState::Loading {
+            file_type,
+            file_name,
+            start_time,
+            show_progress,
+        } = &self.loading_state
+        {
+            if *show_progress {
+                egui::TopBottomPanel::top("loading_bar").show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(format!("Loading {} file: {}", file_type, file_name));
+                        ui.label(format!("({:.1}s)", start_time.elapsed().as_secs_f32()));
+                    });
+                });
+            }
+        }
 
         egui::SidePanel::left("left_panel")
             .resizable(true)
