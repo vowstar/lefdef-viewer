@@ -424,18 +424,24 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
     }
 }
 
+/// Check if a cell only has power/ground pins
+fn cell_has_only_power_pins(pins: &[LefPin]) -> bool {
+    !pins.is_empty() && pins.iter().all(|pin| is_power_pin(pin))
+}
+
 /// Generate Liberty pin definition for a pin group with voltage configuration
 fn generate_lib_pin_definition_with_config(
     pin_group: &[&LefPin],
     voltage_config: &VoltageConfig,
+    treat_power_as_signal: bool,
 ) -> String {
     if pin_group.len() == 1 {
         // Single pin
         let pin = pin_group[0];
         let clean_name = clean_pin_name(&pin.name);
 
-        // Check if this is a power or ground pin
-        if is_power_pin(pin) {
+        // Check if this is a power or ground pin (and not treated as signal)
+        if is_power_pin(pin) && !treat_power_as_signal {
             // Generate pg_pin instead of regular pin
             let pg_type = match pin.use_type.as_str() {
                 "POWER" => "primary_power",
@@ -447,46 +453,61 @@ fn generate_lib_pin_definition_with_config(
                 clean_name, clean_name, pg_type
             )
         } else {
-            // Regular signal pin
-            let direction = pin.direction.to_lowercase();
-            // Check for pin-specific related power configuration first
-            let related_power = voltage_config
-                .pin_related_power
-                .get(&clean_name)
-                .map(|s| s.as_str())
-                .or_else(|| {
-                    if !voltage_config.selected_related_power.is_empty() {
-                        Some(&voltage_config.selected_related_power)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or("VDD");
+            // Regular signal pin or power pin treated as signal
+            let direction = if treat_power_as_signal && is_power_pin(pin) {
+                // For power pins treated as signal, use "inout" direction
+                "inout".to_string()
+            } else {
+                pin.direction.to_lowercase()
+            };
 
-            // Check for pin-specific related ground configuration first
-            let related_ground = voltage_config
-                .pin_related_ground
-                .get(&clean_name)
-                .map(|s| s.as_str())
-                .or_else(|| {
-                    if !voltage_config.selected_related_ground.is_empty() {
-                        Some(&voltage_config.selected_related_ground)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or("VSS");
-            format!(
-                "   pin({})  {{\n           direction : {};\n           capacitance : 0.02;\n           related_power_pin : {} ;\n           related_ground_pin  : {} ;\n   }}\n",
-                clean_name, direction, related_power, related_ground
-            )
+            if treat_power_as_signal && is_power_pin(pin) {
+                // Power pin treated as signal - no related power/ground pins
+                format!(
+                    "   pin({})  {{\n           direction : {};\n           capacitance : 0.02;\n   }}\n",
+                    clean_name, direction
+                )
+            } else {
+                // Regular signal pin
+                // Check for pin-specific related power configuration first
+                let related_power = voltage_config
+                    .pin_related_power
+                    .get(&clean_name)
+                    .map(|s| s.as_str())
+                    .or_else(|| {
+                        if !voltage_config.selected_related_power.is_empty() {
+                            Some(&voltage_config.selected_related_power)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("VDD");
+
+                // Check for pin-specific related ground configuration first
+                let related_ground = voltage_config
+                    .pin_related_ground
+                    .get(&clean_name)
+                    .map(|s| s.as_str())
+                    .or_else(|| {
+                        if !voltage_config.selected_related_ground.is_empty() {
+                            Some(&voltage_config.selected_related_ground)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("VSS");
+                format!(
+                    "   pin({})  {{\n           direction : {};\n           capacitance : 0.02;\n           related_power_pin : {} ;\n           related_ground_pin  : {} ;\n   }}\n",
+                    clean_name, direction, related_power, related_ground
+                )
+            }
         }
     } else {
         // Bus pin
         let record = compress_bus_group(pin_group);
         let is_power = pin_group.iter().any(|pin| is_power_pin(pin));
 
-        if is_power {
+        if is_power && !treat_power_as_signal {
             // For power/ground bus pins, generate individual pg_pins
             let mut result = String::new();
             for pin in pin_group {
@@ -499,6 +520,17 @@ fn generate_lib_pin_definition_with_config(
                 result.push_str(&format!(
                     "   pg_pin({})  {{\n           voltage_name : {} ;\n           pg_type : {} ;\n   }}\n",
                     clean_name, clean_name, pg_type
+                ));
+            }
+            result
+        } else if is_power && treat_power_as_signal {
+            // For power/ground bus pins treated as signal, generate individual pins
+            let mut result = String::new();
+            for pin in pin_group {
+                let clean_name = clean_pin_name(&pin.name);
+                result.push_str(&format!(
+                    "   pin({})  {{\n           direction : inout;\n           capacitance : 0.02;\n   }}\n",
+                    clean_name
                 ));
             }
             result
@@ -802,6 +834,9 @@ pub fn export_lib_stub_with_voltage(
         let mut sorted_pins = macro_def.pins.clone();
         sort_pins_by_type(&mut sorted_pins);
 
+        // Check if this cell only has power/ground pins
+        let treat_power_as_signal = cell_has_only_power_pins(&sorted_pins);
+
         let groups = group_pins_by_bus(&sorted_pins);
         for group in groups {
             // Create a default voltage config for backward compatibility
@@ -814,7 +849,11 @@ pub fn export_lib_stub_with_voltage(
                 .insert("VSS".to_string(), ground_voltage);
             default_config.selected_related_power = "VDD".to_string();
             default_config.selected_related_ground = "VSS".to_string();
-            let pin_def = generate_lib_pin_definition_with_config(&group, &default_config);
+            let pin_def = generate_lib_pin_definition_with_config(
+                &group,
+                &default_config,
+                treat_power_as_signal,
+            );
             write!(file, "{}", pin_def)?;
         }
 
@@ -961,9 +1000,16 @@ pub fn export_lib_stub_with_voltage_config(
         let mut sorted_pins = macro_def.pins.clone();
         sort_pins_by_type(&mut sorted_pins);
 
+        // Check if this cell only has power/ground pins
+        let treat_power_as_signal = cell_has_only_power_pins(&sorted_pins);
+
         let groups = group_pins_by_bus(&sorted_pins);
         for group in groups {
-            let pin_def = generate_lib_pin_definition_with_config(&group, voltage_config);
+            let pin_def = generate_lib_pin_definition_with_config(
+                &group,
+                voltage_config,
+                treat_power_as_signal,
+            );
             write!(file, "{}", pin_def)?;
         }
 
