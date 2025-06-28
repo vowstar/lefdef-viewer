@@ -465,8 +465,7 @@ fn generate_lib_pin_definition_with_config(
                         } else {
                             None
                         }
-                    })
-                    .unwrap_or("VDD");
+                    });
 
                 // Check for pin-specific related ground configuration first
                 let related_ground = voltage_config
@@ -479,11 +478,18 @@ fn generate_lib_pin_definition_with_config(
                         } else {
                             None
                         }
-                    })
-                    .unwrap_or("VSS");
-                format!(
-                    "   pin({clean_name})  {{\n           direction : {direction};\n           capacitance : 0.02;\n           related_power_pin : {related_power} ;\n           related_ground_pin  : {related_ground} ;\n   }}\n"
-                )
+                    });
+                let mut pin_def = format!(
+                    "   pin({clean_name})  {{\n           direction : {direction};\n           capacitance : 0.02;\n"
+                );
+                if let Some(power) = related_power {
+                    pin_def.push_str(&format!("           related_power_pin : {power} ;\n"));
+                }
+                if let Some(ground) = related_ground {
+                    pin_def.push_str(&format!("           related_ground_pin  : {ground} ;\n"));
+                }
+                pin_def.push_str("   }\n");
+                pin_def
             }
         }
     } else {
@@ -539,8 +545,7 @@ fn generate_lib_pin_definition_with_config(
                     } else {
                         None
                     }
-                })
-                .unwrap_or("VDD");
+                });
 
             // Check for bus-specific related ground configuration first
             let related_ground = voltage_config
@@ -553,12 +558,18 @@ fn generate_lib_pin_definition_with_config(
                     } else {
                         None
                     }
-                })
-                .unwrap_or("VSS");
+                });
 
-            let mut result = format!(
-                "   bus({base_name}) {{\n        bus_type       : \"{bus_type}\";\n        related_power_pin : {related_power} ;\n        related_ground_pin  : {related_ground} ;\n\n"
-            );
+            let mut result =
+                format!("   bus({base_name}) {{\n        bus_type       : \"{bus_type}\";\n");
+
+            if let Some(power) = related_power {
+                result.push_str(&format!("        related_power_pin : {power} ;\n"));
+            }
+            if let Some(ground) = related_ground {
+                result.push_str(&format!("        related_ground_pin  : {ground} ;\n"));
+            }
+            result.push('\n');
 
             // Generate individual pin definitions
             for i in 0..record.width {
@@ -567,7 +578,7 @@ fn generate_lib_pin_definition_with_config(
                 ));
             }
 
-            result.push_str(&format!("}}  /* end of bus {base_name} */\n"));
+            result.push_str(&format!("}} /* end of bus {base_name} */\n"));
             result
         }
     }
