@@ -416,11 +416,74 @@ fn cell_has_only_power_pins(pins: &[LefPin]) -> bool {
     !pins.is_empty() && pins.iter().all(is_power_pin)
 }
 
+/// Collect all pg_pins that are actually used as related_power_pin or related_ground_pin in a cell
+fn collect_used_pg_pins(
+    pins: &[LefPin],
+    voltage_config: &VoltageConfig,
+) -> std::collections::HashSet<String> {
+    let mut used_pg_pins = std::collections::HashSet::new();
+
+    // First, create a set of all pin names that actually exist in this cell
+    let existing_pins: std::collections::HashSet<String> =
+        pins.iter().map(|pin| clean_pin_name(&pin.name)).collect();
+
+    for pin in pins {
+        let clean_name = clean_pin_name(&pin.name);
+
+        // Skip power/ground pins - we only care about signal pins that reference power/ground pins
+        if is_power_pin(pin) {
+            continue;
+        }
+
+        // Check for pin-specific related power configuration first
+        let related_power = voltage_config
+            .pin_related_power
+            .get(&clean_name)
+            .map(|s| s.as_str())
+            .or_else(|| {
+                if !voltage_config.selected_related_power.is_empty() {
+                    Some(&voltage_config.selected_related_power)
+                } else {
+                    None
+                }
+            });
+
+        // Check for pin-specific related ground configuration first
+        let related_ground = voltage_config
+            .pin_related_ground
+            .get(&clean_name)
+            .map(|s| s.as_str())
+            .or_else(|| {
+                if !voltage_config.selected_related_ground.is_empty() {
+                    Some(&voltage_config.selected_related_ground)
+                } else {
+                    None
+                }
+            });
+
+        // Only add power/ground pins to the set if they actually exist in this cell
+        if let Some(power) = related_power {
+            if existing_pins.contains(power) {
+                used_pg_pins.insert(power.to_string());
+            }
+        }
+        if let Some(ground) = related_ground {
+            if existing_pins.contains(ground) {
+                used_pg_pins.insert(ground.to_string());
+            }
+        }
+    }
+
+    used_pg_pins
+}
+
 /// Generate Liberty pin definition for a pin group with voltage configuration
 fn generate_lib_pin_definition_with_config(
     pin_group: &[&LefPin],
     voltage_config: &VoltageConfig,
     treat_power_as_signal: bool,
+    used_pg_pins: &std::collections::HashSet<String>,
+    existing_pins: &std::collections::HashSet<String>,
 ) -> String {
     if pin_group.len() == 1 {
         // Single pin
@@ -428,7 +491,8 @@ fn generate_lib_pin_definition_with_config(
         let clean_name = clean_pin_name(&pin.name);
 
         // Check if this is a power or ground pin (and not treated as signal)
-        if is_power_pin(pin) && !treat_power_as_signal {
+        // Also check if this pg_pin is actually used as related_power_pin or related_ground_pin
+        if is_power_pin(pin) && !treat_power_as_signal && used_pg_pins.contains(&clean_name) {
             // Generate pg_pin instead of regular pin
             let pg_type = match pin.use_type.as_str() {
                 "POWER" => "primary_power",
@@ -439,16 +503,20 @@ fn generate_lib_pin_definition_with_config(
                 "   pg_pin({clean_name})  {{\n           voltage_name : {clean_name} ;\n           pg_type : {pg_type} ;\n   }}\n"
             )
         } else {
-            // Regular signal pin or power pin treated as signal
-            let direction = if treat_power_as_signal && is_power_pin(pin) {
-                // For power pins treated as signal, use "inout" direction
+            // Regular signal pin or power pin treated as signal or unused pg_pin
+            let direction = if (treat_power_as_signal && is_power_pin(pin))
+                || (is_power_pin(pin) && !used_pg_pins.contains(&clean_name))
+            {
+                // For power pins treated as signal or unused pg_pins, use "inout" direction
                 "inout".to_string()
             } else {
                 pin.direction.to_lowercase()
             };
 
-            if treat_power_as_signal && is_power_pin(pin) {
-                // Power pin treated as signal - no related power/ground pins
+            if (treat_power_as_signal && is_power_pin(pin))
+                || (is_power_pin(pin) && !used_pg_pins.contains(&clean_name))
+            {
+                // Power pin treated as signal or unused pg_pin - no related power/ground pins
                 format!(
                     "   pin({clean_name})  {{\n           direction : {direction};\n           capacitance : 0.02;\n   }}\n"
                 )
@@ -482,11 +550,17 @@ fn generate_lib_pin_definition_with_config(
                 let mut pin_def = format!(
                     "   pin({clean_name})  {{\n           direction : {direction};\n           capacitance : 0.02;\n"
                 );
+                // Only add related_power_pin if the referenced pin actually exists in this cell
                 if let Some(power) = related_power {
-                    pin_def.push_str(&format!("           related_power_pin : {power} ;\n"));
+                    if existing_pins.contains(power) {
+                        pin_def.push_str(&format!("           related_power_pin : {power} ;\n"));
+                    }
                 }
+                // Only add related_ground_pin if the referenced pin actually exists in this cell
                 if let Some(ground) = related_ground {
-                    pin_def.push_str(&format!("           related_ground_pin  : {ground} ;\n"));
+                    if existing_pins.contains(ground) {
+                        pin_def.push_str(&format!("           related_ground_pin  : {ground} ;\n"));
+                    }
                 }
                 pin_def.push_str("   }\n");
                 pin_def
@@ -498,20 +572,39 @@ fn generate_lib_pin_definition_with_config(
         let is_power = pin_group.iter().any(|pin| is_power_pin(pin));
 
         if is_power && !treat_power_as_signal {
-            // For power/ground bus pins, generate individual pg_pins
-            let mut result = String::new();
-            for pin in pin_group {
+            // Check if any of the power pins in this bus are used as related pins
+            let any_used = pin_group.iter().any(|pin| {
                 let clean_name = clean_pin_name(&pin.name);
-                let pg_type = match pin.use_type.as_str() {
-                    "POWER" => "primary_power",
-                    "GROUND" => "primary_ground",
-                    _ => "primary_power", // fallback
-                };
-                result.push_str(&format!(
+                used_pg_pins.contains(&clean_name)
+            });
+
+            if any_used {
+                // For power/ground bus pins, generate individual pg_pins
+                let mut result = String::new();
+                for pin in pin_group {
+                    let clean_name = clean_pin_name(&pin.name);
+                    let pg_type = match pin.use_type.as_str() {
+                        "POWER" => "primary_power",
+                        "GROUND" => "primary_ground",
+                        _ => "primary_power", // fallback
+                    };
+                    result.push_str(&format!(
                     "   pg_pin({clean_name})  {{\n           voltage_name : {clean_name} ;\n           pg_type : {pg_type} ;\n   }}\n"
                 ));
+                }
+                result
+            } else {
+                // Power/ground bus pins not used as related pins - treat as regular pins
+                let mut result = String::new();
+                for pin in pin_group {
+                    let clean_name = clean_pin_name(&pin.name);
+                    let direction = "inout"; // Power pins as regular pins should be inout
+                    result.push_str(&format!(
+                        "   pin({clean_name})  {{\n           direction : {direction};\n           capacitance : 0.02;\n   }}\n"
+                    ));
+                }
+                result
             }
-            result
         } else if is_power && treat_power_as_signal {
             // For power/ground bus pins treated as signal, generate individual pins
             let mut result = String::new();
@@ -563,11 +656,17 @@ fn generate_lib_pin_definition_with_config(
             let mut result =
                 format!("   bus({base_name}) {{\n        bus_type       : \"{bus_type}\";\n");
 
+            // Only add related_power_pin if the referenced pin actually exists in this cell
             if let Some(power) = related_power {
-                result.push_str(&format!("        related_power_pin : {power} ;\n"));
+                if existing_pins.contains(power) {
+                    result.push_str(&format!("        related_power_pin : {power} ;\n"));
+                }
             }
+            // Only add related_ground_pin if the referenced pin actually exists in this cell
             if let Some(ground) = related_ground {
-                result.push_str(&format!("        related_ground_pin  : {ground} ;\n"));
+                if existing_pins.contains(ground) {
+                    result.push_str(&format!("        related_ground_pin  : {ground} ;\n"));
+                }
             }
             result.push('\n');
 
@@ -828,22 +927,34 @@ pub fn export_lib_stub_with_voltage(
         // Check if this cell only has power/ground pins
         let treat_power_as_signal = cell_has_only_power_pins(&sorted_pins);
 
+        // Create a default voltage config for backward compatibility
+        let mut default_config = VoltageConfig::default();
+        default_config
+            .power_pins
+            .insert("VDD".to_string(), power_voltage);
+        default_config
+            .ground_pins
+            .insert("VSS".to_string(), ground_voltage);
+        default_config.selected_related_power = "VDD".to_string();
+        default_config.selected_related_ground = "VSS".to_string();
+
+        // Collect all pg_pins that are actually used as related_power_pin or related_ground_pin
+        let used_pg_pins = collect_used_pg_pins(&sorted_pins, &default_config);
+
+        // Create a set of all pin names that actually exist in this cell
+        let existing_pins: std::collections::HashSet<String> = sorted_pins
+            .iter()
+            .map(|pin| clean_pin_name(&pin.name))
+            .collect();
+
         let groups = group_pins_by_bus(&sorted_pins);
         for group in groups {
-            // Create a default voltage config for backward compatibility
-            let mut default_config = VoltageConfig::default();
-            default_config
-                .power_pins
-                .insert("VDD".to_string(), power_voltage);
-            default_config
-                .ground_pins
-                .insert("VSS".to_string(), ground_voltage);
-            default_config.selected_related_power = "VDD".to_string();
-            default_config.selected_related_ground = "VSS".to_string();
             let pin_def = generate_lib_pin_definition_with_config(
                 &group,
                 &default_config,
                 treat_power_as_signal,
+                &used_pg_pins,
+                &existing_pins,
             );
             write!(file, "{pin_def}")?;
         }
@@ -994,12 +1105,23 @@ pub fn export_lib_stub_with_voltage_config(
         // Check if this cell only has power/ground pins
         let treat_power_as_signal = cell_has_only_power_pins(&sorted_pins);
 
+        // Collect all pg_pins that are actually used as related_power_pin or related_ground_pin
+        let used_pg_pins = collect_used_pg_pins(&sorted_pins, voltage_config);
+
+        // Create a set of all pin names that actually exist in this cell
+        let existing_pins: std::collections::HashSet<String> = sorted_pins
+            .iter()
+            .map(|pin| clean_pin_name(&pin.name))
+            .collect();
+
         let groups = group_pins_by_bus(&sorted_pins);
         for group in groups {
             let pin_def = generate_lib_pin_definition_with_config(
                 &group,
                 voltage_config,
                 treat_power_as_signal,
+                &used_pg_pins,
+                &existing_pins,
             );
             write!(file, "{pin_def}")?;
         }
