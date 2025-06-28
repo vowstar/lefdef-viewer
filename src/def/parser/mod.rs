@@ -80,11 +80,11 @@ impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ParseError::UnexpectedEof => write!(f, "Unexpected end of file"),
-            ParseError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
-            ParseError::InfiniteLoop(msg) => write!(f, "Infinite loop detected: {}", msg),
-            ParseError::UnknownKeyword(kw) => write!(f, "Unknown keyword: {}", kw),
+            ParseError::InvalidFormat(msg) => write!(f, "Invalid format: {msg}"),
+            ParseError::InfiniteLoop(msg) => write!(f, "Infinite loop detected: {msg}"),
+            ParseError::UnknownKeyword(kw) => write!(f, "Unknown keyword: {kw}"),
             ParseError::MaxIterationsExceeded(max) => {
-                write!(f, "Maximum iterations exceeded: {}", max)
+                write!(f, "Maximum iterations exceeded: {max}")
             }
             ParseError::NoProgress {
                 items_parsed,
@@ -92,8 +92,7 @@ impl fmt::Display for ParseError {
             } => {
                 write!(
                     f,
-                    "No progress: parsed {} items, stuck at line {}",
-                    items_parsed, stuck_at_line
+                    "No progress: parsed {items_parsed} items, stuck at line {stuck_at_line}"
                 )
             }
             ParseError::ItemTooLong {
@@ -103,8 +102,7 @@ impl fmt::Display for ParseError {
             } => {
                 write!(
                     f,
-                    "Item too long: {} has {} lines, limit is {}",
-                    item_type, lines, limit
+                    "Item too long: {item_type} has {lines} lines, limit is {limit}"
                 )
             }
             ParseError::Timeout {
@@ -167,8 +165,7 @@ impl ParseContext {
     pub fn check_infinite_loop(&mut self, line_index: usize) -> ParseResult<()> {
         if self.processed_lines.contains(&line_index) {
             return Err(ParseError::InfiniteLoop(format!(
-                "Line {} repeated",
-                line_index
+                "Line {line_index} repeated"
             )));
         }
         self.processed_lines.insert(line_index);
@@ -297,7 +294,7 @@ impl<P: DefItemParser> MultiLineParser<P> {
             // Check for section end
             if line.starts_with(end_pattern) {
                 if self.debug_mode {
-                    println!("🔧 Found section end: {}", end_pattern);
+                    println!("🔧 Found section end: {end_pattern}");
                 }
                 break;
             }
@@ -326,7 +323,7 @@ impl<P: DefItemParser> MultiLineParser<P> {
             } else {
                 // Not a valid item header, skip line
                 if self.debug_mode {
-                    println!("🔧 Skipping non-item line: {}", line);
+                    println!("🔧 Skipping non-item line: {line}");
                 }
                 i += 1;
             }
@@ -394,7 +391,7 @@ impl<P: DefItemParser> MultiLineParser<P> {
             let line = lines[i].trim();
 
             if self.debug_mode {
-                println!("🔧   Processing continuation: {}", line);
+                println!("🔧   Processing continuation: {line}");
             }
 
             match self.parser.parse_continuation(&mut item_context, line) {

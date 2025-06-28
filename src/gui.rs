@@ -931,7 +931,7 @@ impl LefDefViewer {
             let reader = LefReader::new();
             let result = match reader.read(&path) {
                 Ok(lef) => Ok(lef),
-                Err(e) => Err(format!("Failed to load LEF file: {}", e)),
+                Err(e) => Err(format!("Failed to load LEF file: {e}")),
             };
             let _ = tx.send(LoadingMessage::LefLoaded(result, path));
         });
@@ -1047,7 +1047,7 @@ impl LefDefViewer {
                 self.fit_to_view_delay_frames = 3;
             }
             Err(e) => {
-                self.error_message = Some(format!("Failed to load LEF file: {}", e));
+                self.error_message = Some(format!("Failed to load LEF file: {e}"));
             }
         }
     }
@@ -1077,7 +1077,7 @@ impl LefDefViewer {
             let reader = DefReader::new();
             let result = match reader.read(&path) {
                 Ok(def) => Ok(def),
-                Err(e) => Err(format!("Failed to load DEF file: {}", e)),
+                Err(e) => Err(format!("Failed to load DEF file: {e}")),
             };
             let _ = tx.send(LoadingMessage::DefLoaded(Box::new(result), path));
         });
@@ -1096,7 +1096,7 @@ impl LefDefViewer {
                 self.fit_to_view_delay_frames = 3;
             }
             Err(e) => {
-                self.error_message = Some(format!("Failed to load DEF file: {}", e));
+                self.error_message = Some(format!("Failed to load DEF file: {e}"));
             }
         }
     }
@@ -1116,7 +1116,7 @@ impl LefDefViewer {
     fn handle_export_lef_csv(&mut self) {
         if let Some(lef_data) = &self.lef_data {
             let basename = self.get_lef_basename();
-            let default_filename = format!("{}.csv", basename);
+            let default_filename = format!("{basename}.csv");
             if let Some(file_path) = FileDialog::new()
                 .set_file_name(&default_filename)
                 .add_filter("CSV files", &["csv"])
@@ -1131,7 +1131,7 @@ impl LefDefViewer {
                         ));
                     }
                     Err(e) => {
-                        self.error_message = Some(format!("Failed to export CSV: {}", e));
+                        self.error_message = Some(format!("Failed to export CSV: {e}"));
                     }
                 }
             }
@@ -1179,7 +1179,7 @@ impl LefDefViewer {
                             ));
                         }
                         Err(e) => {
-                            self.error_message = Some(format!("Failed to export pinlist: {}", e));
+                            self.error_message = Some(format!("Failed to export pinlist: {e}"));
                         }
                     }
                 }
@@ -1198,7 +1198,7 @@ impl LefDefViewer {
                             ));
                         }
                         Err(e) => {
-                            self.error_message = Some(format!("Failed to export pinlists: {}", e));
+                            self.error_message = Some(format!("Failed to export pinlists: {e}"));
                         }
                     }
                 }
@@ -1209,7 +1209,7 @@ impl LefDefViewer {
     fn handle_export_verilog_stub(&mut self) {
         if let Some(lef_data) = &self.lef_data {
             let basename = self.get_lef_basename();
-            let default_filename = format!("{}.v", basename);
+            let default_filename = format!("{basename}.v");
             if let Some(file_path) = FileDialog::new()
                 .set_file_name(&default_filename)
                 .add_filter("Verilog files", &["v"])
@@ -1225,7 +1225,7 @@ impl LefDefViewer {
                         ));
                     }
                     Err(e) => {
-                        self.error_message = Some(format!("Failed to export Verilog stub: {}", e));
+                        self.error_message = Some(format!("Failed to export Verilog stub: {e}"));
                     }
                 }
             }
@@ -1263,7 +1263,7 @@ impl LefDefViewer {
                         ));
                     }
                     Err(e) => {
-                        self.error_message = Some(format!("Failed to export Liberty stub: {}", e));
+                        self.error_message = Some(format!("Failed to export Liberty stub: {e}"));
                     }
                 }
             }
@@ -1387,13 +1387,13 @@ impl LefDefViewer {
             ui.heading("Files");
 
             if let Some(path) = &self.lef_file_path {
-                ui.label(format!("LEF: {}", path));
+                ui.label(format!("LEF: {path}"));
             } else {
                 ui.label("No LEF file loaded");
             }
 
             if let Some(path) = &self.def_file_path {
-                ui.label(format!("DEF: {}", path));
+                ui.label(format!("DEF: {path}"));
             } else {
                 ui.label("No DEF file loaded");
             }
@@ -1517,7 +1517,7 @@ impl LefDefViewer {
                                 let total_obs_polys: usize = macro_def.obs.iter().map(|obs| obs.polygons.len()).sum();
 
                                 if total_obs_rects > 0 || total_obs_polys > 0 {
-                                    ui.collapsing(format!("🚫 Obstructions ({} rects, {} polys)", total_obs_rects, total_obs_polys), |ui| {
+                                    ui.collapsing(format!("🚫 Obstructions ({total_obs_rects} rects, {total_obs_polys} polys)"), |ui| {
                                         egui::ScrollArea::vertical()
                                             .auto_shrink([false, true])
                                             .max_height(120.0)
@@ -1554,9 +1554,9 @@ impl LefDefViewer {
                                                         }
 
                                                         let obs_label = if poly_count > 0 {
-                                                            format!("{} ({} rects, {} polys)", layer, rect_count, poly_count)
+                                                            format!("{layer} ({rect_count} rects, {poly_count} polys)")
                                                         } else {
-                                                            format!("{} ({} rects)", layer, rect_count)
+                                                            format!("{layer} ({rect_count} rects)")
                                                         };
                                                         ui.label(obs_label);
                                                     });
@@ -3125,7 +3125,7 @@ impl eframe::App for LefDefViewer {
                 egui::TopBottomPanel::top("loading_bar").show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(format!("Loading {} file: {}", file_type, file_name));
+                        ui.label(format!("Loading {file_type} file: {file_name}"));
                         ui.label(format!("({:.1}s)", start_time.elapsed().as_secs_f32()));
                     });
                 });

@@ -15,7 +15,7 @@ impl LefReader {
 
     pub fn read<P: AsRef<Path>>(&self, path: P) -> Result<Lef, Box<dyn std::error::Error>> {
         let path_str = path.as_ref().display().to_string();
-        println!("🔍 Loading LEF file: {}", path_str);
+        println!("🔍 Loading LEF file: {path_str}");
 
         let content = fs::read_to_string(path)?;
         println!("📄 LEF file size: {} bytes", content.len());
@@ -53,15 +53,14 @@ impl LefReader {
                 }
 
                 println!(
-                    "🔧 Statistics: {} pins, {} rects, {} polygons",
-                    total_pins, total_rects, total_polygons
+                    "🔧 Statistics: {total_pins} pins, {total_rects} rects, {total_polygons} polygons"
                 );
 
                 Ok(lef)
             }
             Err(e) => {
-                println!("❌ Failed to parse LEF file: {:?}", e);
-                Err(format!("Failed to parse LEF file: {:?}", e).into())
+                println!("❌ Failed to parse LEF file: {e:?}");
+                Err(format!("Failed to parse LEF file: {e:?}").into())
             }
         }
     }

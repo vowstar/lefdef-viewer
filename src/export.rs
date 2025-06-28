@@ -212,7 +212,7 @@ fn compress_bus_group(pins: &[&LefPin]) -> PinCsvRecord {
     let width = max_index - min_index + 1;
 
     PinCsvRecord {
-        name: format!("{}[{}:{}]", base_name, max_index, min_index),
+        name: format!("{base_name}[{max_index}:{min_index}]"),
         direction: first_pin.direction.clone(),
         pin_type: first_pin.use_type.clone(),
         width,
@@ -332,7 +332,7 @@ fn collect_bus_widths(lef_data: &Lef) -> BTreeSet<usize> {
 
 /// Get bus type name for Liberty file (e.g., DATA8B for width 8)
 fn get_bus_type_name(width: usize) -> String {
-    format!("DATA{}B", width)
+    format!("DATA{width}B")
 }
 
 /// Clean pin name by removing special characters like '!'
@@ -376,14 +376,10 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
 
         if is_power {
             format!(
-                "`ifdef PG_EXIST\n    {} {},       /**< {} */\n`endif  /* PG_EXIST */",
-                direction, clean_name, clean_name
+                "`ifdef PG_EXIST\n    {direction} {clean_name},       /**< {clean_name} */\n`endif  /* PG_EXIST */"
             )
         } else {
-            format!(
-                "    {} {},       /**< {} */",
-                direction, clean_name, clean_name
-            )
+            format!("    {direction} {clean_name},       /**< {clean_name} */")
         }
     } else {
         // Bus pin - use existing compression logic
@@ -402,22 +398,13 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
         let port_declaration = if let Some(bracket_start) = clean_name.rfind('[') {
             let base_name = &clean_name[..bracket_start];
             let range_part = &clean_name[bracket_start..];
-            format!(
-                "    {} {} {},  /**< {} */",
-                direction, range_part, base_name, clean_name
-            )
+            format!("    {direction} {range_part} {base_name},  /**< {clean_name} */")
         } else {
-            format!(
-                "    {} {},       /**< {} */",
-                direction, clean_name, clean_name
-            )
+            format!("    {direction} {clean_name},       /**< {clean_name} */")
         };
 
         if is_power {
-            format!(
-                "`ifdef PG_EXIST\n{}\n`endif /* PG_EXIST */",
-                port_declaration
-            )
+            format!("`ifdef PG_EXIST\n{port_declaration}\n`endif /* PG_EXIST */")
         } else {
             port_declaration
         }
@@ -426,7 +413,7 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
 
 /// Check if a cell only has power/ground pins
 fn cell_has_only_power_pins(pins: &[LefPin]) -> bool {
-    !pins.is_empty() && pins.iter().all(|pin| is_power_pin(pin))
+    !pins.is_empty() && pins.iter().all(is_power_pin)
 }
 
 /// Generate Liberty pin definition for a pin group with voltage configuration
@@ -449,8 +436,7 @@ fn generate_lib_pin_definition_with_config(
                 _ => "primary_power", // fallback
             };
             format!(
-                "   pg_pin({})  {{\n           voltage_name : {} ;\n           pg_type : {} ;\n   }}\n",
-                clean_name, clean_name, pg_type
+                "   pg_pin({clean_name})  {{\n           voltage_name : {clean_name} ;\n           pg_type : {pg_type} ;\n   }}\n"
             )
         } else {
             // Regular signal pin or power pin treated as signal
@@ -464,8 +450,7 @@ fn generate_lib_pin_definition_with_config(
             if treat_power_as_signal && is_power_pin(pin) {
                 // Power pin treated as signal - no related power/ground pins
                 format!(
-                    "   pin({})  {{\n           direction : {};\n           capacitance : 0.02;\n   }}\n",
-                    clean_name, direction
+                    "   pin({clean_name})  {{\n           direction : {direction};\n           capacitance : 0.02;\n   }}\n"
                 )
             } else {
                 // Regular signal pin
@@ -497,8 +482,7 @@ fn generate_lib_pin_definition_with_config(
                     })
                     .unwrap_or("VSS");
                 format!(
-                    "   pin({})  {{\n           direction : {};\n           capacitance : 0.02;\n           related_power_pin : {} ;\n           related_ground_pin  : {} ;\n   }}\n",
-                    clean_name, direction, related_power, related_ground
+                    "   pin({clean_name})  {{\n           direction : {direction};\n           capacitance : 0.02;\n           related_power_pin : {related_power} ;\n           related_ground_pin  : {related_ground} ;\n   }}\n"
                 )
             }
         }
@@ -518,8 +502,7 @@ fn generate_lib_pin_definition_with_config(
                     _ => "primary_power", // fallback
                 };
                 result.push_str(&format!(
-                    "   pg_pin({})  {{\n           voltage_name : {} ;\n           pg_type : {} ;\n   }}\n",
-                    clean_name, clean_name, pg_type
+                    "   pg_pin({clean_name})  {{\n           voltage_name : {clean_name} ;\n           pg_type : {pg_type} ;\n   }}\n"
                 ));
             }
             result
@@ -529,8 +512,7 @@ fn generate_lib_pin_definition_with_config(
             for pin in pin_group {
                 let clean_name = clean_pin_name(&pin.name);
                 result.push_str(&format!(
-                    "   pin({})  {{\n           direction : inout;\n           capacitance : 0.02;\n   }}\n",
-                    clean_name
+                    "   pin({clean_name})  {{\n           direction : inout;\n           capacitance : 0.02;\n   }}\n"
                 ));
             }
             result
@@ -575,19 +557,17 @@ fn generate_lib_pin_definition_with_config(
                 .unwrap_or("VSS");
 
             let mut result = format!(
-                "   bus({}) {{\n        bus_type       : \"{}\";\n        related_power_pin : {} ;\n        related_ground_pin  : {} ;\n\n",
-                base_name, bus_type, related_power, related_ground
+                "   bus({base_name}) {{\n        bus_type       : \"{bus_type}\";\n        related_power_pin : {related_power} ;\n        related_ground_pin  : {related_ground} ;\n\n"
             );
 
             // Generate individual pin definitions
             for i in 0..record.width {
                 result.push_str(&format!(
-                    "        pin ({}[{}]) {{\n        direction      : {};\n        capacitance    : 0.02;\n        }}\n\n",
-                    base_name, i, direction
+                    "        pin ({base_name}[{i}]) {{\n        direction      : {direction};\n        capacitance    : 0.02;\n        }}\n\n"
                 ));
             }
 
-            result.push_str(&format!("}}  /* end of bus {} */\n", base_name));
+            result.push_str(&format!("}}  /* end of bus {base_name} */\n"));
             result
         }
     }
@@ -604,7 +584,7 @@ pub fn export_verilog_stub(
 
     // Generate file header
     writeln!(file, "/**")?;
-    writeln!(file, " * @file {}.v", basename)?;
+    writeln!(file, " * @file {basename}.v")?;
     writeln!(file, " * @brief Verilog stub file for LEF cells")?;
     writeln!(file, " *")?;
     writeln!(
@@ -618,8 +598,8 @@ pub fn export_verilog_stub(
     writeln!(file, " * NOTE: Auto-generated file, do not edit manually.")?;
     writeln!(file, " */")?;
     writeln!(file, "`timescale 1ns / 1ps")?;
-    writeln!(file, "`ifndef {}", guard_name)?;
-    writeln!(file, "`define {}", guard_name)?;
+    writeln!(file, "`ifndef {guard_name}")?;
+    writeln!(file, "`define {guard_name}")?;
     writeln!(file)?;
     writeln!(file, "`ifndef SYNTHESIS")?;
 
@@ -656,9 +636,9 @@ pub fn export_verilog_stub(
                 if is_last {
                     // Remove trailing comma from the last port
                     let port_without_comma = port_decl.trim_end_matches(',').trim_end();
-                    writeln!(file, "{}", port_without_comma)?;
+                    writeln!(file, "{port_without_comma}")?;
                 } else {
-                    writeln!(file, "{}", port_decl)?;
+                    writeln!(file, "{port_decl}")?;
                 }
             }
         }
@@ -675,7 +655,7 @@ pub fn export_verilog_stub(
 
     writeln!(file, "`endif  /* SYNTHESIS */")?;
     writeln!(file)?;
-    writeln!(file, "`endif  /* {} */", guard_name)?;
+    writeln!(file, "`endif  /* {guard_name} */")?;
     writeln!(file)?;
 
     Ok(())
@@ -693,7 +673,7 @@ pub fn export_lib_stub_with_voltage(
     let mut file = File::create(file_path)?;
 
     // Generate library header
-    writeln!(file, "library ({})  {{", lib_name)?;
+    writeln!(file, "library ({lib_name})  {{")?;
     writeln!(file)?;
     writeln!(file, "/* General Library Attributes */")?;
     writeln!(file)?;
@@ -776,7 +756,7 @@ pub fn export_lib_stub_with_voltage(
                 writeln!(file, "  type ({})  {{", get_bus_type_name(width))?;
                 writeln!(file, "    base_type : array;")?;
                 writeln!(file, "    data_type : bit;")?;
-                writeln!(file, "    bit_width : {};", width)?;
+                writeln!(file, "    bit_width : {width};")?;
                 writeln!(file, "    bit_from  : {};", width - 1)?;
                 writeln!(file, "    bit_to    : 0;")?;
                 writeln!(file, "    downto    : true;")?;
@@ -813,10 +793,10 @@ pub fn export_lib_stub_with_voltage(
     // Generate dynamic voltage mapping
     writeln!(file, "/* Voltage Mapping */")?;
     for power_pin in &power_pins {
-        writeln!(file, "    voltage_map({}, {});", power_pin, power_voltage)?;
+        writeln!(file, "    voltage_map({power_pin}, {power_voltage});")?;
     }
     for ground_pin in &ground_pins {
-        writeln!(file, "    voltage_map({}, {});", ground_pin, ground_voltage)?;
+        writeln!(file, "    voltage_map({ground_pin}, {ground_voltage});")?;
     }
     writeln!(file)?;
 
@@ -854,7 +834,7 @@ pub fn export_lib_stub_with_voltage(
                 &default_config,
                 treat_power_as_signal,
             );
-            write!(file, "{}", pin_def)?;
+            write!(file, "{pin_def}")?;
         }
 
         writeln!(file, "}}  /* end of cell {} */", macro_def.name)?;
@@ -961,7 +941,7 @@ pub fn export_lib_stub_with_voltage_config(
                 writeln!(file, "  type ({})  {{", get_bus_type_name(width))?;
                 writeln!(file, "    base_type : array;")?;
                 writeln!(file, "    data_type : bit;")?;
-                writeln!(file, "    bit_width : {};", width)?;
+                writeln!(file, "    bit_width : {width};")?;
                 writeln!(file, "    bit_from  : {};", width - 1)?;
                 writeln!(file, "    bit_to    : 0;")?;
                 writeln!(file, "    downto    : true;")?;
@@ -979,10 +959,10 @@ pub fn export_lib_stub_with_voltage_config(
 
     // Generate voltage mapping
     for (power_pin, voltage) in &voltage_config.power_pins {
-        writeln!(file, "    voltage_map({}, {});", power_pin, voltage)?;
+        writeln!(file, "    voltage_map({power_pin}, {voltage});")?;
     }
     for (ground_pin, voltage) in &voltage_config.ground_pins {
-        writeln!(file, "    voltage_map({}, {});", ground_pin, voltage)?;
+        writeln!(file, "    voltage_map({ground_pin}, {voltage});")?;
     }
     writeln!(file)?;
 
@@ -1010,7 +990,7 @@ pub fn export_lib_stub_with_voltage_config(
                 voltage_config,
                 treat_power_as_signal,
             );
-            write!(file, "{}", pin_def)?;
+            write!(file, "{pin_def}")?;
         }
 
         writeln!(file, "}}  /* end of cell {} */", macro_def.name)?;

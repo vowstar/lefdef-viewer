@@ -15,7 +15,7 @@ impl DefReader {
 
     pub fn read<P: AsRef<Path>>(&self, path: P) -> Result<Def, Box<dyn std::error::Error>> {
         let path_str = path.as_ref().display().to_string();
-        println!("🔍 Loading DEF file: {}", path_str);
+        println!("🔍 Loading DEF file: {path_str}");
 
         let content = fs::read_to_string(path)?;
         println!("📄 DEF file size: {} bytes", content.len());
@@ -40,8 +40,8 @@ impl DefReader {
                 Ok(def)
             }
             Err(e) => {
-                println!("❌ Failed to parse DEF file: {:?}", e);
-                Err(format!("Failed to parse DEF file: {:?}", e).into())
+                println!("❌ Failed to parse DEF file: {e:?}");
+                Err(format!("Failed to parse DEF file: {e:?}").into())
             }
         }
     }

@@ -385,7 +385,7 @@ fn compress_bus_group(pins: &[&LefPin]) -> PinCsvRecord {
     let width = max_index - min_index + 1;
 
     PinCsvRecord {
-        name: format!("{}[{}:{}]", base_name, max_index, min_index),
+        name: format!("{base_name}[{max_index}:{min_index}]"),
         direction: first_pin.direction.clone(),
         pin_type: first_pin.use_type.clone(),
         width,
@@ -538,7 +538,7 @@ impl VoltageDialog {
                     ui.label("Power Pins:");
                     for (pin_name, voltage) in &mut voltage_config.power_pins {
                         ui.horizontal(|ui| {
-                            ui.label(format!("{}:", pin_name));
+                            ui.label(format!("{pin_name}:"));
                             ui.add(
                                 egui::DragValue::new(voltage)
                                     .speed(0.01)
@@ -556,7 +556,7 @@ impl VoltageDialog {
                     ui.label("Ground Pins:");
                     for (pin_name, voltage) in &mut voltage_config.ground_pins {
                         ui.horizontal(|ui| {
-                            ui.label(format!("{}:", pin_name));
+                            ui.label(format!("{pin_name}:"));
                             ui.add(
                                 egui::DragValue::new(voltage)
                                     .speed(0.01)
