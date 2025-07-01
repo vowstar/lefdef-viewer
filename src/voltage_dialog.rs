@@ -748,6 +748,40 @@ impl VoltageDialog {
                                 }
                             });
                     });
+
+                    // Additional batch controls for is_analog and is_pad
+                    ui.horizontal(|ui| {
+                        if ui.button("Set as Analog").clicked() {
+                            for selected_pin in &voltage_config.selected_pins {
+                                // Check if pin is a regular pin (not power/ground pin)
+                                if !voltage_config.power_pins.contains_key(selected_pin)
+                                    && !voltage_config.ground_pins.contains_key(selected_pin)
+                                {
+                                    voltage_config
+                                        .pin_is_analog
+                                        .insert(selected_pin.clone(), true);
+                                }
+                            }
+                        }
+
+                        if ui.button("Unset Analog").clicked() {
+                            for selected_pin in &voltage_config.selected_pins {
+                                voltage_config.pin_is_analog.remove(selected_pin);
+                            }
+                        }
+
+                        if ui.button("Set as Pad").clicked() {
+                            for selected_pin in &voltage_config.selected_pins {
+                                voltage_config.pin_is_pad.insert(selected_pin.clone(), true);
+                            }
+                        }
+
+                        if ui.button("Unset Pad").clicked() {
+                            for selected_pin in &voltage_config.selected_pins {
+                                voltage_config.pin_is_pad.remove(selected_pin);
+                            }
+                        }
+                    });
                 }
 
                 ui.separator();
@@ -772,6 +806,8 @@ impl VoltageDialog {
                     .column(Column::exact(100.0)) // Power selection
                     .column(Column::exact(50.0)) // Ground label
                     .column(Column::exact(100.0)) // Ground selection
+                    .column(Column::exact(60.0)) // Analog checkbox
+                    .column(Column::exact(60.0)) // Pad checkbox
                     .header(20.0, |mut header| {
                         header.col(|ui| {
                             ui.strong("✓");
@@ -796,6 +832,12 @@ impl VoltageDialog {
                         });
                         header.col(|ui| {
                             ui.strong("Ground Pin");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Analog");
+                        });
+                        header.col(|ui| {
+                            ui.strong("Pad");
                         });
                     })
                     .body(|mut body| {
@@ -905,6 +947,54 @@ impl VoltageDialog {
                                             }
                                         }
                                     });
+                                });
+
+                                // is_analog checkbox column
+                                row.col(|ui| {
+                                    // Only allow analog setting for regular pins (not power/ground pins)
+                                    let is_power_or_ground = voltage_config
+                                        .power_pins
+                                        .contains_key(&pin_group.name)
+                                        || voltage_config.ground_pins.contains_key(&pin_group.name);
+
+                                    ui.add_enabled_ui(!is_power_or_ground, |ui| {
+                                        let mut is_analog = voltage_config
+                                            .pin_is_analog
+                                            .get(&pin_group.name)
+                                            .copied()
+                                            .unwrap_or(false);
+
+                                        if ui.checkbox(&mut is_analog, "").changed() {
+                                            if is_analog {
+                                                voltage_config
+                                                    .pin_is_analog
+                                                    .insert(pin_group.name.clone(), true);
+                                            } else {
+                                                voltage_config
+                                                    .pin_is_analog
+                                                    .remove(&pin_group.name);
+                                            }
+                                        }
+                                    });
+                                });
+
+                                // is_pad checkbox column
+                                row.col(|ui| {
+                                    let mut is_pad = voltage_config
+                                        .pin_is_pad
+                                        .get(&pin_group.name)
+                                        .copied()
+                                        .unwrap_or(false);
+
+                                    if ui.checkbox(&mut is_pad, "").changed() {
+                                        if is_pad {
+                                            voltage_config
+                                                .pin_is_pad
+                                                .insert(pin_group.name.clone(), true);
+                                        } else {
+                                            voltage_config.pin_is_pad.remove(&pin_group.name);
+                                        }
+                                    }
                                 });
                             });
                         }

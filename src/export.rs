@@ -21,6 +21,9 @@ pub struct VoltageConfig {
     // Pin-specific related power/ground configuration
     pub pin_related_power: std::collections::BTreeMap<String, String>, // pin_name -> related_power_pin
     pub pin_related_ground: std::collections::BTreeMap<String, String>, // pin_name -> related_ground_pin
+    // Pin-specific analog and pad configuration
+    pub pin_is_analog: std::collections::BTreeMap<String, bool>, // pin_name -> is_analog
+    pub pin_is_pad: std::collections::BTreeMap<String, bool>,    // pin_name -> is_pad
     // UI state for pin selection
     pub selected_pins: std::collections::BTreeSet<String>, // selected pins for batch operations
     pub pin_filter: String,                                // search filter for pins
@@ -37,6 +40,8 @@ impl Default for VoltageConfig {
             lib_name: "lef_cells".to_string(),
             pin_related_power: std::collections::BTreeMap::new(),
             pin_related_ground: std::collections::BTreeMap::new(),
+            pin_is_analog: std::collections::BTreeMap::new(),
+            pin_is_pad: std::collections::BTreeMap::new(),
             selected_pins: std::collections::BTreeSet::new(),
             pin_filter: String::new(),
         }
@@ -562,6 +567,24 @@ fn generate_lib_pin_definition_with_config(
                         pin_def.push_str(&format!("           related_ground_pin  : {ground} ;\n"));
                     }
                 }
+                // Add is_analog attribute if set
+                if voltage_config
+                    .pin_is_analog
+                    .get(&pin.name)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    pin_def.push_str("           is_analog : true ;\n");
+                }
+                // Add is_pad attribute if set
+                if voltage_config
+                    .pin_is_pad
+                    .get(&pin.name)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    pin_def.push_str("           is_pad : true ;\n");
+                }
                 pin_def.push_str("   }\n");
                 pin_def
             }
@@ -672,9 +695,31 @@ fn generate_lib_pin_definition_with_config(
 
             // Generate individual pin definitions
             for i in 0..record.width {
-                result.push_str(&format!(
-                    "        pin ({base_name}[{i}]) {{\n        direction      : {direction};\n        capacitance    : 0.02;\n        }}\n\n"
-                ));
+                let mut pin_def = format!(
+                    "        pin ({base_name}[{i}]) {{\n        direction      : {direction};\n        capacitance    : 0.02;\n"
+                );
+
+                // Add is_analog attribute if set (for bus pins, check the base name)
+                if voltage_config
+                    .pin_is_analog
+                    .get(&record.name)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    pin_def.push_str("        is_analog : true ;\n");
+                }
+                // Add is_pad attribute if set (for bus pins, check the base name)
+                if voltage_config
+                    .pin_is_pad
+                    .get(&record.name)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    pin_def.push_str("        is_pad : true ;\n");
+                }
+
+                pin_def.push_str("        }\n\n");
+                result.push_str(&pin_def);
             }
 
             result.push_str(&format!("}} /* end of bus {base_name} */\n"));
@@ -1096,6 +1141,21 @@ pub fn export_lib_stub_with_voltage_config(
         writeln!(file, "   dont_touch      : true;")?;
         writeln!(file, "   dont_use        : true;")?;
         writeln!(file, "   map_only        : true;")?;
+
+        // Check if any pin in this cell has is_pad set to true
+        let has_pad_pin = macro_def.pins.iter().any(|pin| {
+            voltage_config
+                .pin_is_pad
+                .get(&pin.name)
+                .copied()
+                .unwrap_or(false)
+        });
+
+        // Add pad_cell attribute if any pin is marked as pad
+        if has_pad_pin {
+            writeln!(file, "   pad_cell        : true;")?;
+        }
+
         writeln!(file)?;
 
         // Sort pins by type priority before generating pin definitions
