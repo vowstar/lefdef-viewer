@@ -3,6 +3,7 @@
 
 use lefdef_viewer::export::export_verilog_stub;
 use lefdef_viewer::lef::{Lef, LefMacro, LefPin};
+use std::env;
 use std::fs;
 
 fn create_test_pin(name: &str, direction: &str, use_type: &str) -> LefPin {
@@ -41,11 +42,12 @@ fn test_verilog_generation_single_pin() {
     lef_data.macros.push(macro_def);
 
     // Export to temporary file
-    let temp_file = "/tmp/test_single_pin.v";
-    export_verilog_stub(&lef_data, temp_file, "test_single_pin").unwrap();
+    let temp_dir = env::temp_dir();
+    let temp_file = temp_dir.join("test_single_pin.v");
+    export_verilog_stub(&lef_data, temp_file.to_str().unwrap(), "test_single_pin").unwrap();
 
     // Read the generated file
-    let content = fs::read_to_string(temp_file).unwrap();
+    let content = fs::read_to_string(&temp_file).unwrap();
 
     // Verify no trailing comma in port list
     assert!(content.contains("input A       /**< A */"));
@@ -55,7 +57,7 @@ fn test_verilog_generation_single_pin() {
     assert!(content.contains(");"));
 
     // Clean up
-    fs::remove_file(temp_file).unwrap();
+    fs::remove_file(&temp_file).unwrap();
 }
 
 #[test]
@@ -80,11 +82,12 @@ fn test_verilog_generation_only_signal_pins() {
     lef_data.macros.push(macro_def);
 
     // Export to temporary file
-    let temp_file = "/tmp/test_signal_only.v";
-    export_verilog_stub(&lef_data, temp_file, "test_signal_only").unwrap();
+    let temp_dir = env::temp_dir();
+    let temp_file = temp_dir.join("test_signal_only.v");
+    export_verilog_stub(&lef_data, temp_file.to_str().unwrap(), "test_signal_only").unwrap();
 
     // Read the generated file
-    let content = fs::read_to_string(temp_file).unwrap();
+    let content = fs::read_to_string(&temp_file).unwrap();
 
     // Verify proper comma placement for signal-only pins
     assert!(content.contains("    input A1P0_IREF,       /**< A1P0_IREF */"));
@@ -98,7 +101,7 @@ fn test_verilog_generation_only_signal_pins() {
     assert!(!content.contains("`endif  /* PG_EXIST */"));
 
     // Clean up
-    fs::remove_file(temp_file).unwrap();
+    fs::remove_file(&temp_file).unwrap();
 }
 
 #[test]
@@ -120,11 +123,12 @@ fn test_verilog_generation_bus_pins() {
     lef_data.macros.push(macro_def);
 
     // Export to temporary file
-    let temp_file = "/tmp/test_bus.v";
-    export_verilog_stub(&lef_data, temp_file, "test_bus").unwrap();
+    let temp_dir = env::temp_dir();
+    let temp_file = temp_dir.join("test_bus.v");
+    export_verilog_stub(&lef_data, temp_file.to_str().unwrap(), "test_bus").unwrap();
 
     // Read the generated file
-    let content = fs::read_to_string(temp_file).unwrap();
+    let content = fs::read_to_string(&temp_file).unwrap();
 
     // Verify bus declaration
     assert!(content.contains("input [3:0] DATA"));
@@ -135,7 +139,7 @@ fn test_verilog_generation_bus_pins() {
     assert!(content.contains(");"));
 
     // Clean up
-    fs::remove_file(temp_file).unwrap();
+    fs::remove_file(&temp_file).unwrap();
 }
 
 #[test]
@@ -156,11 +160,12 @@ fn test_verilog_generation_power_pins() {
     lef_data.macros.push(macro_def);
 
     // Export to temporary file
-    let temp_file = "/tmp/test_power.v";
-    export_verilog_stub(&lef_data, temp_file, "test_power").unwrap();
+    let temp_dir = env::temp_dir();
+    let temp_file = temp_dir.join("test_power.v");
+    export_verilog_stub(&lef_data, temp_file.to_str().unwrap(), "test_power").unwrap();
 
     // Read the generated file
-    let content = fs::read_to_string(temp_file).unwrap();
+    let content = fs::read_to_string(&temp_file).unwrap();
 
     // Verify power pins are now properly wrapped in `ifdef PG_EXIST (first)
     assert!(content.contains("`ifdef PG_EXIST"));
@@ -176,7 +181,7 @@ fn test_verilog_generation_power_pins() {
     assert!(content.contains(");"));
 
     // Clean up
-    fs::remove_file(temp_file).unwrap();
+    fs::remove_file(&temp_file).unwrap();
 }
 
 #[test]
@@ -204,11 +209,17 @@ fn test_verilog_generation_pg_exist_mixed_pins() {
     lef_data.macros.push(macro_def);
 
     // Export to temporary file
-    let temp_file = "/tmp/test_pg_exist_mixed.v";
-    export_verilog_stub(&lef_data, temp_file, "test_pg_exist_mixed").unwrap();
+    let temp_dir = env::temp_dir();
+    let temp_file = temp_dir.join("test_pg_exist_mixed.v");
+    export_verilog_stub(
+        &lef_data,
+        temp_file.to_str().unwrap(),
+        "test_pg_exist_mixed",
+    )
+    .unwrap();
 
     // Read the generated file
-    let content = fs::read_to_string(temp_file).unwrap();
+    let content = fs::read_to_string(&temp_file).unwrap();
 
     // Verify structure: signal pins first, then power pins in ifdef
     assert!(content.contains("input CLK,       /**< CLK */"));
@@ -222,7 +233,7 @@ fn test_verilog_generation_pg_exist_mixed_pins() {
     assert!(content.contains("`endif  /* PG_EXIST */"));
 
     // Clean up
-    fs::remove_file(temp_file).unwrap();
+    fs::remove_file(&temp_file).unwrap();
 }
 
 #[test]
@@ -243,11 +254,12 @@ fn test_verilog_generation_only_power_pins() {
     lef_data.macros.push(macro_def);
 
     // Export to temporary file
-    let temp_file = "/tmp/test_only_power.v";
-    export_verilog_stub(&lef_data, temp_file, "test_only_power").unwrap();
+    let temp_dir = env::temp_dir();
+    let temp_file = temp_dir.join("test_only_power.v");
+    export_verilog_stub(&lef_data, temp_file.to_str().unwrap(), "test_only_power").unwrap();
 
     // Read the generated file
-    let content = fs::read_to_string(temp_file).unwrap();
+    let content = fs::read_to_string(&temp_file).unwrap();
 
     // Verify all power pins are in ifdef blocks with proper comma placement
     assert!(content.contains("`ifdef PG_EXIST"));
@@ -259,7 +271,7 @@ fn test_verilog_generation_only_power_pins() {
     assert!(content.contains("`endif  /* PG_EXIST */"));
 
     // Clean up
-    fs::remove_file(temp_file).unwrap();
+    fs::remove_file(&temp_file).unwrap();
 }
 
 #[test]
@@ -292,12 +304,23 @@ fn test_iverilog_syntax_validation() {
     lef_data.macros.push(macro_def);
 
     // Export to temporary file
-    let temp_file = "/tmp/test_iverilog_syntax.v";
-    export_verilog_stub(&lef_data, temp_file, "test_iverilog_syntax").unwrap();
+    let temp_dir = env::temp_dir();
+    let temp_file = temp_dir.join("test_iverilog_syntax.v");
+    export_verilog_stub(
+        &lef_data,
+        temp_file.to_str().unwrap(),
+        "test_iverilog_syntax",
+    )
+    .unwrap();
 
     // Test with iverilog (without PG_EXIST defined)
     let output = Command::new("iverilog")
-        .args(["-Wall", temp_file, "-o", "/tmp/test_syntax_no_pg.vvp"])
+        .args([
+            "-Wall",
+            temp_file.to_str().unwrap(),
+            "-o",
+            temp_dir.join("test_syntax_no_pg.vvp").to_str().unwrap(),
+        ])
         .output();
 
     match output {
@@ -318,9 +341,9 @@ fn test_iverilog_syntax_validation() {
         .args([
             "-Wall",
             "-DPG_EXIST",
-            temp_file,
+            temp_file.to_str().unwrap(),
             "-o",
-            "/tmp/test_syntax_with_pg.vvp",
+            temp_dir.join("test_syntax_with_pg.vvp").to_str().unwrap(),
         ])
         .output();
 
@@ -338,9 +361,9 @@ fn test_iverilog_syntax_validation() {
     }
 
     // Clean up
-    fs::remove_file(temp_file).unwrap();
-    let _ = fs::remove_file("/tmp/test_syntax_no_pg.vvp");
-    let _ = fs::remove_file("/tmp/test_syntax_with_pg.vvp");
+    fs::remove_file(&temp_file).unwrap();
+    let _ = fs::remove_file(temp_dir.join("test_syntax_no_pg.vvp")).unwrap_or(());
+    let _ = fs::remove_file(temp_dir.join("test_syntax_with_pg.vvp")).unwrap_or(());
 }
 
 #[test]
@@ -362,12 +385,23 @@ fn test_iverilog_validation_only_power() {
     lef_data.macros.push(macro_def);
 
     // Export to temporary file
-    let temp_file = "/tmp/test_iverilog_only_power.v";
-    export_verilog_stub(&lef_data, temp_file, "test_iverilog_only_power").unwrap();
+    let temp_dir = env::temp_dir();
+    let temp_file = temp_dir.join("test_iverilog_only_power.v");
+    export_verilog_stub(
+        &lef_data,
+        temp_file.to_str().unwrap(),
+        "test_iverilog_only_power",
+    )
+    .unwrap();
 
     // Test with iverilog (without PG_EXIST defined) - should have empty port list
     let output = Command::new("iverilog")
-        .args(["-Wall", temp_file, "-o", "/tmp/test_only_power_no_pg.vvp"])
+        .args([
+            "-Wall",
+            temp_file.to_str().unwrap(),
+            "-o",
+            temp_dir.join("test_only_power_no_pg.vvp").to_str().unwrap(),
+        ])
         .output();
 
     match output {
@@ -388,9 +422,12 @@ fn test_iverilog_validation_only_power() {
         .args([
             "-Wall",
             "-DPG_EXIST",
-            temp_file,
+            temp_file.to_str().unwrap(),
             "-o",
-            "/tmp/test_only_power_with_pg.vvp",
+            temp_dir
+                .join("test_only_power_with_pg.vvp")
+                .to_str()
+                .unwrap(),
         ])
         .output();
 
@@ -408,9 +445,9 @@ fn test_iverilog_validation_only_power() {
     }
 
     // Clean up
-    fs::remove_file(temp_file).unwrap();
-    let _ = fs::remove_file("/tmp/test_only_power_no_pg.vvp");
-    let _ = fs::remove_file("/tmp/test_only_power_with_pg.vvp");
+    fs::remove_file(&temp_file).unwrap();
+    let _ = fs::remove_file(temp_dir.join("test_only_power_no_pg.vvp")).unwrap_or(());
+    let _ = fs::remove_file(temp_dir.join("test_only_power_with_pg.vvp")).unwrap_or(());
 }
 
 #[test]
@@ -435,12 +472,23 @@ fn test_iverilog_validation_only_signal() {
     lef_data.macros.push(macro_def);
 
     // Export to temporary file
-    let temp_file = "/tmp/test_iverilog_only_signal.v";
-    export_verilog_stub(&lef_data, temp_file, "test_iverilog_only_signal").unwrap();
+    let temp_dir = env::temp_dir();
+    let temp_file = temp_dir.join("test_iverilog_only_signal.v");
+    export_verilog_stub(
+        &lef_data,
+        temp_file.to_str().unwrap(),
+        "test_iverilog_only_signal",
+    )
+    .unwrap();
 
     // Test with iverilog (both cases should work the same)
     let output = Command::new("iverilog")
-        .args(["-Wall", temp_file, "-o", "/tmp/test_only_signal.vvp"])
+        .args([
+            "-Wall",
+            temp_file.to_str().unwrap(),
+            "-o",
+            temp_dir.join("test_only_signal.vvp").to_str().unwrap(),
+        ])
         .output();
 
     match output {
@@ -457,8 +505,8 @@ fn test_iverilog_validation_only_signal() {
     }
 
     // Clean up
-    fs::remove_file(temp_file).unwrap();
-    let _ = fs::remove_file("/tmp/test_only_signal.vvp");
+    fs::remove_file(&temp_file).unwrap();
+    let _ = fs::remove_file(temp_dir.join("test_only_signal.vvp")).unwrap_or(());
 }
 
 #[test]
@@ -490,11 +538,12 @@ fn test_verilog_generation_pg_and_signal_pins() {
     lef_data.macros.push(macro_def);
 
     // Export to temporary file
-    let temp_file = "/tmp/test_pg_and_signal.v";
-    export_verilog_stub(&lef_data, temp_file, "test_pg_and_signal").unwrap();
+    let temp_dir = env::temp_dir();
+    let temp_file = temp_dir.join("test_pg_and_signal.v");
+    export_verilog_stub(&lef_data, temp_file.to_str().unwrap(), "test_pg_and_signal").unwrap();
 
     // Read the generated file
-    let content = fs::read_to_string(temp_file).unwrap();
+    let content = fs::read_to_string(&temp_file).unwrap();
 
     // Verify structure: PG pins first in ifdef, then signal pins
     assert!(content.contains("`ifdef PG_EXIST"));
@@ -511,7 +560,7 @@ fn test_verilog_generation_pg_and_signal_pins() {
     assert!(!content.contains("A1P0_IOUT,"));
 
     // Clean up
-    fs::remove_file(temp_file).unwrap();
+    fs::remove_file(&temp_file).unwrap();
 }
 
 #[test]
@@ -541,12 +590,23 @@ fn test_iverilog_validation_pg_and_signal() {
     lef_data.macros.push(macro_def);
 
     // Export to temporary file
-    let temp_file = "/tmp/test_iverilog_pg_signal.v";
-    export_verilog_stub(&lef_data, temp_file, "test_iverilog_pg_signal").unwrap();
+    let temp_dir = env::temp_dir();
+    let temp_file = temp_dir.join("test_iverilog_pg_signal.v");
+    export_verilog_stub(
+        &lef_data,
+        temp_file.to_str().unwrap(),
+        "test_iverilog_pg_signal",
+    )
+    .unwrap();
 
     // Test with iverilog (without PG_EXIST defined)
     let output = Command::new("iverilog")
-        .args(["-Wall", temp_file, "-o", "/tmp/test_pg_signal_no_pg.vvp"])
+        .args([
+            "-Wall",
+            temp_file.to_str().unwrap(),
+            "-o",
+            temp_dir.join("test_pg_signal_no_pg.vvp").to_str().unwrap(),
+        ])
         .output();
 
     match output {
@@ -567,9 +627,12 @@ fn test_iverilog_validation_pg_and_signal() {
         .args([
             "-Wall",
             "-DPG_EXIST",
-            temp_file,
+            temp_file.to_str().unwrap(),
             "-o",
-            "/tmp/test_pg_signal_with_pg.vvp",
+            temp_dir
+                .join("test_pg_signal_with_pg.vvp")
+                .to_str()
+                .unwrap(),
         ])
         .output();
 
@@ -587,7 +650,7 @@ fn test_iverilog_validation_pg_and_signal() {
     }
 
     // Clean up
-    fs::remove_file(temp_file).unwrap();
-    let _ = fs::remove_file("/tmp/test_pg_signal_no_pg.vvp");
-    let _ = fs::remove_file("/tmp/test_pg_signal_with_pg.vvp");
+    fs::remove_file(&temp_file).unwrap();
+    let _ = fs::remove_file(temp_dir.join("test_pg_signal_no_pg.vvp")).unwrap_or(());
+    let _ = fs::remove_file(temp_dir.join("test_pg_signal_with_pg.vvp")).unwrap_or(());
 }
