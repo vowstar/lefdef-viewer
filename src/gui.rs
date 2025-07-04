@@ -89,6 +89,8 @@ pub struct LefDefViewer {
     // Async loading state
     loading_state: LoadingState,
     loading_receiver: Option<mpsc::Receiver<LoadingMessage>>,
+    // Macro search/filter
+    macro_filter: String,
 }
 
 impl LefDefViewer {
@@ -134,6 +136,8 @@ impl LefDefViewer {
             // Async loading state
             loading_state: LoadingState::Idle,
             loading_receiver: None,
+            // Macro search/filter
+            macro_filter: String::new(),
         }
     }
 
@@ -1432,10 +1436,34 @@ impl LefDefViewer {
             if let Some(lef) = &self.lef_data {
                 ui.heading("LEF Macros (Cells)");
                 ui.label("Select cells to display:");
+
+                // Add search/filter box
+                ui.horizontal(|ui| {
+                    ui.label("🔍 Filter:");
+                    ui.text_edit_singleline(&mut self.macro_filter);
+                    if ui.small_button("✖").on_hover_text("Clear filter").clicked() {
+                        self.macro_filter.clear();
+                    }
+                });
+
+                // Filter macros based on search text
+                let filtered_macros: Vec<&crate::lef::LefMacro> = lef.macros
+                    .iter()
+                    .filter(|macro_def| {
+                        if self.macro_filter.is_empty() {
+                            true
+                        } else {
+                            macro_def.name.to_lowercase().contains(&self.macro_filter.to_lowercase())
+                        }
+                    })
+                    .collect();
+
+                ui.label(format!("Showing {} of {} macros", filtered_macros.len(), lef.macros.len()));
+
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        for macro_def in &lef.macros {
+                        for macro_def in filtered_macros {
                             let mut is_selected = self.selected_cells.contains(&macro_def.name);
                             if ui.checkbox(&mut is_selected, &macro_def.name).clicked() {
                                 if is_selected {
