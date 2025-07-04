@@ -364,7 +364,102 @@ fn sort_pins_by_type(pins: &mut [LefPin]) {
     pins.sort_by_key(|pin| (get_pin_sort_priority(pin), pin.name.clone()));
 }
 
-/// Generate Verilog port declaration for a pin group
+/// Generate Verilog signal pin declaration with comma placement before comment
+fn generate_verilog_signal_port_declaration(
+    pin_group: &[&LefPin],
+    add_comma_prefix: bool,
+    add_comma_suffix: bool,
+) -> String {
+    if pin_group.len() == 1 {
+        // Single pin
+        let pin = pin_group[0];
+        let direction = match pin.direction.as_str() {
+            "INPUT" => "input",
+            "OUTPUT" => "output",
+            "INOUT" => "inout",
+            _ => "input", // default
+        };
+
+        let clean_name = clean_pin_name(&pin.name);
+        let prefix = if add_comma_prefix { "," } else { "" };
+        let suffix = if add_comma_suffix { "," } else { "" };
+        format!("    {prefix}{direction} {clean_name}{suffix}       /**< {clean_name} */")
+    } else {
+        // Bus pin - use existing compression logic
+        let record = compress_bus_group(pin_group);
+        let direction = match record.direction.as_str() {
+            "INPUT" => "input",
+            "OUTPUT" => "output",
+            "INOUT" => "inout",
+            _ => "input", // default
+        };
+
+        let clean_name = clean_pin_name(&record.name);
+        let prefix = if add_comma_prefix { "," } else { "" };
+        let suffix = if add_comma_suffix { "," } else { "" };
+
+        // Extract base name and range from compressed name
+        if let Some(bracket_start) = clean_name.rfind('[') {
+            let base_name = &clean_name[..bracket_start];
+            let range_part = &clean_name[bracket_start..];
+            format!(
+                "    {prefix}{direction} {range_part} {base_name}{suffix}  /**< {clean_name} */"
+            )
+        } else {
+            format!("    {prefix}{direction} {clean_name}{suffix}       /**< {clean_name} */")
+        }
+    }
+}
+
+/// Generate Verilog power pin declaration with comma placement before comment
+fn generate_verilog_power_port_declaration(
+    pin_group: &[&LefPin],
+    add_comma_prefix: bool,
+    add_comma_suffix: bool,
+) -> String {
+    if pin_group.len() == 1 {
+        // Single pin
+        let pin = pin_group[0];
+        let direction = match pin.direction.as_str() {
+            "INPUT" => "input",
+            "OUTPUT" => "output",
+            "INOUT" => "inout",
+            _ => "input", // default
+        };
+
+        let clean_name = clean_pin_name(&pin.name);
+        let prefix = if add_comma_prefix { "," } else { "" };
+        let suffix = if add_comma_suffix { "," } else { "" };
+        format!("    {prefix}{direction} {clean_name}{suffix}       /**< {clean_name} */")
+    } else {
+        // Bus pin - use existing compression logic
+        let record = compress_bus_group(pin_group);
+        let direction = match record.direction.as_str() {
+            "INPUT" => "input",
+            "OUTPUT" => "output",
+            "INOUT" => "inout",
+            _ => "input", // default
+        };
+
+        let clean_name = clean_pin_name(&record.name);
+        let prefix = if add_comma_prefix { "," } else { "" };
+        let suffix = if add_comma_suffix { "," } else { "" };
+
+        // Extract base name and range from compressed name
+        if let Some(bracket_start) = clean_name.rfind('[') {
+            let base_name = &clean_name[..bracket_start];
+            let range_part = &clean_name[bracket_start..];
+            format!(
+                "    {prefix}{direction} {range_part} {base_name}{suffix}  /**< {clean_name} */"
+            )
+        } else {
+            format!("    {prefix}{direction} {clean_name}{suffix}       /**< {clean_name} */")
+        }
+    }
+}
+
+/// Generate Verilog port declaration for a pin group (legacy, for compatibility)
+#[allow(dead_code)]
 fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
     if pin_group.len() == 1 {
         // Single pin
@@ -377,15 +472,10 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
         };
 
         let clean_name = clean_pin_name(&pin.name);
-        let is_power = is_power_pin(pin);
 
-        if is_power {
-            format!(
-                "`ifdef PG_EXIST\n    {direction} {clean_name},       /**< {clean_name} */\n`endif  /* PG_EXIST */"
-            )
-        } else {
-            format!("    {direction} {clean_name},       /**< {clean_name} */")
-        }
+        // Always generate power pins as regular pins for syntax compatibility
+        // The `ifdef can be handled at the module level if needed
+        format!("    {direction} {clean_name}       /**< {clean_name} */")
     } else {
         // Bus pin - use existing compression logic
         let record = compress_bus_group(pin_group);
@@ -397,22 +487,18 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
         };
 
         let clean_name = clean_pin_name(&record.name);
-        let is_power = pin_group.iter().any(|pin| is_power_pin(pin));
 
         // Extract base name and range from compressed name
         let port_declaration = if let Some(bracket_start) = clean_name.rfind('[') {
             let base_name = &clean_name[..bracket_start];
             let range_part = &clean_name[bracket_start..];
-            format!("    {direction} {range_part} {base_name},  /**< {clean_name} */")
+            format!("    {direction} {range_part} {base_name}  /**< {clean_name} */")
         } else {
-            format!("    {direction} {clean_name},       /**< {clean_name} */")
+            format!("    {direction} {clean_name}       /**< {clean_name} */")
         };
 
-        if is_power {
-            format!("`ifdef PG_EXIST\n{port_declaration}\n`endif /* PG_EXIST */")
-        } else {
-            port_declaration
-        }
+        // Always generate as regular port declaration for syntax compatibility
+        port_declaration
     }
 }
 
@@ -778,23 +864,52 @@ pub fn export_verilog_stub(
         sort_pins_by_type(&mut sorted_pins);
 
         let groups = group_pins_by_bus(&sorted_pins);
-        let mut port_declarations = Vec::new();
+
+        // Separate power pins from signal pins
+        let mut signal_groups = Vec::new();
+        let mut power_groups = Vec::new();
 
         for group in groups {
-            let port_decl = generate_verilog_port_declaration(&group);
-            port_declarations.push(port_decl);
+            let is_power_group = group.iter().any(|pin| is_power_pin(pin));
+            if is_power_group {
+                power_groups.push(group);
+            } else {
+                signal_groups.push(group);
+            }
         }
 
-        if !port_declarations.is_empty() {
-            for (i, port_decl) in port_declarations.iter().enumerate() {
-                let is_last = i == port_declarations.len() - 1;
-                if is_last {
-                    // Remove trailing comma from the last port
-                    let port_without_comma = port_decl.trim_end_matches(',').trim_end();
-                    writeln!(file, "{port_without_comma}")?;
-                } else {
-                    writeln!(file, "{port_decl}")?;
-                }
+        // Generate all ports with proper comma handling
+        // New logic: PG pins first, then signal pins, only last pin has no comma
+        let total_groups = power_groups.len() + signal_groups.len();
+
+        if total_groups == 0 {
+            // No ports at all
+        } else if !power_groups.is_empty() {
+            // Generate PG pins first (always in ifdef block)
+            writeln!(file, "`ifdef PG_EXIST")?;
+            for (i, group) in power_groups.iter().enumerate() {
+                let is_last_pg = i == power_groups.len() - 1;
+                let is_last_overall = signal_groups.is_empty() && is_last_pg;
+
+                let port_decl =
+                    generate_verilog_power_port_declaration(group, false, !is_last_overall);
+                writeln!(file, "{port_decl}")?;
+            }
+            writeln!(file, "`endif  /* PG_EXIST */")?;
+
+            // Generate signal pins after PG pins
+            for (i, group) in signal_groups.iter().enumerate() {
+                let is_last_signal = i == signal_groups.len() - 1;
+                let port_decl =
+                    generate_verilog_signal_port_declaration(group, false, !is_last_signal);
+                writeln!(file, "{port_decl}")?;
+            }
+        } else {
+            // Only signal pins
+            for (i, group) in signal_groups.iter().enumerate() {
+                let is_last = i == signal_groups.len() - 1;
+                let port_decl = generate_verilog_signal_port_declaration(group, false, !is_last);
+                writeln!(file, "{port_decl}")?;
             }
         }
 
