@@ -5,6 +5,10 @@
 
 A Rust-based LEF (Library Exchange Format) and DEF (Design Exchange Format) file viewer with a modern GUI built using egui.
 
+## Screenshot
+
+![LEF/DEF Viewer Interface](https://github.com/user-attachments/assets/9313efd5-b41e-4674-818f-dc9bc9b64c8b)
+
 ## Features
 
 - **LEF File Support**: Parse and visualize LEF files containing macro definitions, pins, and layout information
