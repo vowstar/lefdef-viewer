@@ -347,7 +347,7 @@ mod tests {
             assert_eq!(placement.y, 10880.0);
             assert_eq!(placement.orientation, "N");
             println!(
-                "✅ Placement parsed correctly in header: {} ({}, {}) {}",
+                "[PASS] Placement parsed correctly in header: {} ({}, {}) {}",
                 placement.placement_type, placement.x, placement.y, placement.orientation
             );
         } else {

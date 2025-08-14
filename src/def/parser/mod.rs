@@ -257,7 +257,7 @@ impl<P: DefItemParser> MultiLineParser<P> {
 
         if self.debug_mode {
             println!(
-                "🔧 Starting {} section parsing at line {}",
+                "[DBG] Starting {} section parsing at line {}",
                 P::item_name(),
                 start_index
             );
@@ -294,7 +294,7 @@ impl<P: DefItemParser> MultiLineParser<P> {
             // Check for section end
             if line.starts_with(end_pattern) {
                 if self.debug_mode {
-                    println!("🔧 Found section end: {end_pattern}");
+                    println!("[DBG] Found section end: {end_pattern}");
                 }
                 break;
             }
@@ -310,7 +310,7 @@ impl<P: DefItemParser> MultiLineParser<P> {
                 context.item_count += 1;
                 if self.debug_mode {
                     println!(
-                        "🔧 Parsing {} #{}: {}",
+                        "[DBG] Parsing {} #{}: {}",
                         P::item_name(),
                         context.item_count,
                         line
@@ -323,7 +323,7 @@ impl<P: DefItemParser> MultiLineParser<P> {
             } else {
                 // Not a valid item header, skip line
                 if self.debug_mode {
-                    println!("🔧 Skipping non-item line: {line}");
+                    println!("[DBG] Skipping non-item line: {line}");
                 }
                 i += 1;
             }
@@ -335,7 +335,7 @@ impl<P: DefItemParser> MultiLineParser<P> {
 
         if self.debug_mode {
             println!(
-                "🔧 Completed {} section: {} items parsed",
+                "[DBG] Completed {} section: {} items parsed",
                 P::item_name(),
                 items.len()
             );
@@ -358,7 +358,7 @@ impl<P: DefItemParser> MultiLineParser<P> {
         // Check if header line already contains semicolon (complete in one line)
         if header_line.contains(';') {
             if self.debug_mode {
-                println!("🔧   Single-line item detected");
+                println!("[DBG]   Single-line item detected");
             }
             // For single-line definitions, parse the complete line first
             let result = self
@@ -391,7 +391,7 @@ impl<P: DefItemParser> MultiLineParser<P> {
             let line = lines[i].trim();
 
             if self.debug_mode {
-                println!("🔧   Processing continuation: {line}");
+                println!("[DBG]   Processing continuation: {line}");
             }
 
             match self.parser.parse_continuation(&mut item_context, line) {
@@ -400,13 +400,13 @@ impl<P: DefItemParser> MultiLineParser<P> {
                 }
                 ContinuationResult::Complete => {
                     if self.debug_mode {
-                        println!("🔧   Item completed");
+                        println!("[DBG]   Item completed");
                     }
                     return Ok((self.parser.finalize(item_context)?, i + 1));
                 }
                 ContinuationResult::NextItem => {
                     if self.debug_mode {
-                        println!("🔧   Hit next item, backtracking");
+                        println!("[DBG]   Hit next item, backtracking");
                     }
                     return Ok((self.parser.finalize(item_context)?, i));
                 }

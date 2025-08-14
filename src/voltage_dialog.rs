@@ -810,7 +810,7 @@ impl VoltageDialog {
                     .column(Column::exact(60.0)) // Pad checkbox
                     .header(20.0, |mut header| {
                         header.col(|ui| {
-                            ui.strong("✓");
+                            ui.strong("OK");
                         });
                         header.col(|ui| {
                             ui.strong("Signal Name");

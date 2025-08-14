@@ -1429,7 +1429,7 @@ impl LefDefViewer {
                 }
             });
 
-            ui.label("💡 Fit to View uses OUTLINE layers only");
+            ui.label("TIP: Fit to View uses OUTLINE layers only");
 
             ui.separator();
 
@@ -1439,9 +1439,9 @@ impl LefDefViewer {
 
                 // Add search/filter box
                 ui.horizontal(|ui| {
-                    ui.label("🔍 Filter:");
+                    ui.label("Filter:");
                     ui.text_edit_singleline(&mut self.macro_filter);
-                    if ui.small_button("✖").on_hover_text("Clear filter").clicked() {
+                    if ui.small_button("X").on_hover_text("Clear filter").clicked() {
                         self.macro_filter.clear();
                     }
                 });
@@ -1481,7 +1481,7 @@ impl LefDefViewer {
                                 ));
 
                                 // PINs section
-                                ui.collapsing(format!("📌 PINs ({})", macro_def.pins.len()), |ui| {
+                                ui.collapsing(format!("PINS ({})", macro_def.pins.len()), |ui| {
                                     egui::ScrollArea::vertical()
                                         .auto_shrink([false, true])
                                         .max_height(120.0)
@@ -1545,7 +1545,7 @@ impl LefDefViewer {
                                 let total_obs_polys: usize = macro_def.obs.iter().map(|obs| obs.polygons.len()).sum();
 
                                 if total_obs_rects > 0 || total_obs_polys > 0 {
-                                    ui.collapsing(format!("🚫 Obstructions ({total_obs_rects} rects, {total_obs_polys} polys)"), |ui| {
+                                    ui.collapsing(format!("OBS Obstructions ({total_obs_rects} rects, {total_obs_polys} polys)"), |ui| {
                                         egui::ScrollArea::vertical()
                                             .auto_shrink([false, true])
                                             .max_height(120.0)
@@ -1643,10 +1643,10 @@ impl LefDefViewer {
             // DEF Structure Section
             if let Some(def) = &self.def_data {
                 ui.separator();
-                ui.heading("📊 DEF Structure");
+                ui.heading("DEF Structure");
 
                 // DESIGN information
-                ui.label("📐 DESIGN");
+                ui.label("DESIGN");
                 ui.indent("design_info", |ui| {
                     ui.label("Design loaded successfully");
                 });
@@ -1658,12 +1658,12 @@ impl LefDefViewer {
                     ui.checkbox(&mut self.show_diearea, "");
                     if def.die_area_points.len() == 2 {
                         ui.label(format!(
-                            "🔲 DIEAREA (Rectangle: {} points)",
+                            "DIEAREA (Rectangle: {} points)",
                             def.die_area_points.len()
                         ));
                     } else {
                         ui.label(format!(
-                            "🔲 DIEAREA (Polygon: {} points)",
+                            "DIEAREA (Polygon: {} points)",
                             def.die_area_points.len()
                         ));
                     }
@@ -1678,23 +1678,23 @@ impl LefDefViewer {
                             let width = (p2.0 - p1.0).abs();
                             let height = (p2.1 - p1.1).abs();
                             ui.label(format!(
-                                "  📐 Size: {:.1} × {:.1} μm",
+                                "  Size: {:.1} x {:.1} um",
                                 width / 1000.0,
                                 height / 1000.0
                             ));
                             ui.label(format!(
-                                "  📍 Bottom-left: ({:.1}, {:.1})",
+                                "  Bottom-left: ({:.1}, {:.1})",
                                 p1.0 / 1000.0,
                                 p1.1 / 1000.0
                             ));
                             ui.label(format!(
-                                "  📍 Top-right: ({:.1}, {:.1})",
+                                "  Top-right: ({:.1}, {:.1})",
                                 p2.0 / 1000.0,
                                 p2.1 / 1000.0
                             ));
                         } else {
-                            ui.label("  📐 Custom polygon shape");
-                            ui.label(format!("  📍 {} vertices", def.die_area_points.len()));
+                            ui.label("  Custom polygon shape");
+                            ui.label(format!("  {} vertices", def.die_area_points.len()));
 
                             // Calculate bounding box
                             let min_x = def
@@ -1719,7 +1719,7 @@ impl LefDefViewer {
                                 .fold(f64::NEG_INFINITY, f64::max);
 
                             ui.label(format!(
-                                "  📦 Bounds: ({:.1}, {:.1}) to ({:.1}, {:.1})",
+                                "  Bounds: ({:.1}, {:.1}) to ({:.1}, {:.1})",
                                 min_x / 1000.0,
                                 min_y / 1000.0,
                                 max_x / 1000.0,
@@ -1732,7 +1732,7 @@ impl LefDefViewer {
                 ui.separator();
 
                 // COMPONENTS section
-                egui::CollapsingHeader::new(format!("📦 COMPONENTS ({})", def.components.len()))
+                egui::CollapsingHeader::new(format!("COMP COMPONENTS ({})", def.components.len()))
                     .default_open(true)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -1798,7 +1798,7 @@ impl LefDefViewer {
                 ui.separator();
 
                 // PINS section
-                egui::CollapsingHeader::new(format!("📌 PINS ({})", def.pins.len()))
+                egui::CollapsingHeader::new(format!("PINS ({})", def.pins.len()))
                     .default_open(true)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -1850,7 +1850,7 @@ impl LefDefViewer {
                 ui.separator();
 
                 // NETS section
-                egui::CollapsingHeader::new(format!("🔗 NETS ({})", def.nets.len()))
+                egui::CollapsingHeader::new(format!("NETS ({})", def.nets.len()))
                     .default_open(true)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -2097,10 +2097,10 @@ impl LefDefViewer {
                                 if polygon_data.points.len() >= 3 {
                                     // LEF specification: counterclockwise = solid areas, clockwise = holes
                                     if polygon_data.is_hole {
-                                        // Clockwise → hole/void
+                                        // Clockwise -> hole/void
                                         subtractive_polygons.push(polygon_data);
                                     } else {
-                                        // Counterclockwise → solid
+                                        // Counterclockwise -> solid
                                         additive_polygons.push(polygon_data);
                                     }
                                 }
@@ -2314,10 +2314,10 @@ impl LefDefViewer {
                             if polygon_data.points.len() >= 3 {
                                 // LEF specification: counterclockwise = solid areas, clockwise = holes
                                 if polygon_data.is_hole {
-                                    // Clockwise → hole/void
+                                    // Clockwise -> hole/void
                                     subtractive_polygons.push(polygon_data);
                                 } else {
-                                    // Counterclockwise → solid
+                                    // Counterclockwise -> solid
                                     additive_polygons.push(polygon_data);
                                 }
                             }

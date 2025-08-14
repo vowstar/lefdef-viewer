@@ -24,6 +24,7 @@ pub struct ViaContext {
     pub current_mask: Option<i32>,
 }
 
+#[allow(dead_code)]
 impl ViaContext {
     pub fn new(name: String) -> Self {
         Self {
@@ -56,8 +57,10 @@ impl ViaContext {
 }
 
 /// VIA parser for DEF files
+#[allow(dead_code)]
 pub struct DefViaParser;
 
+#[allow(dead_code)]
 impl DefViaParser {
     pub fn new() -> Self {
         Self
@@ -132,6 +135,7 @@ impl DefItemParser for DefViaParser {
     }
 }
 
+#[allow(dead_code)]
 impl DefViaParser {
     /// Parse attributes from the header line
     fn parse_header_attributes(&self, context: &mut ViaContext, parts: &[&str]) {

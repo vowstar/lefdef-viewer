@@ -15,25 +15,25 @@ impl LefReader {
 
     pub fn read<P: AsRef<Path>>(&self, path: P) -> Result<Lef, Box<dyn std::error::Error>> {
         let path_str = path.as_ref().display().to_string();
-        println!("🔍 Loading LEF file: {path_str}");
+        println!("[LOAD] Loading LEF file: {path_str}");
 
         let content = fs::read_to_string(path)?;
-        println!("📄 LEF file size: {} bytes", content.len());
+        println!("[FILE] LEF file size: {} bytes", content.len());
 
         // Print first few lines for debugging
         let lines: Vec<&str> = content.lines().take(10).collect();
-        println!("📋 First 10 lines:");
+        println!("[FILE] First 10 lines:");
         for (i, line) in lines.iter().enumerate() {
             println!("  {}: {}", i + 1, line);
         }
 
         // Use proven nom-based parser
-        println!("🔧 Using proven nom-based LEF parser...");
+        println!("[DBG] Using proven nom-based LEF parser...");
         match super::lef_parser::parse_lef(&content) {
             Ok((_, lef)) => {
-                println!("✅ LEF parsed successfully!");
+                println!("[PASS] LEF parsed successfully!");
                 println!(
-                    "📊 Found {} macros with complete PIN geometry data",
+                    "[INFO] Found {} macros with complete PIN geometry data",
                     lef.macros.len()
                 );
 
@@ -53,13 +53,13 @@ impl LefReader {
                 }
 
                 println!(
-                    "🔧 Statistics: {total_pins} pins, {total_rects} rects, {total_polygons} polygons"
+                    "[INFO] Statistics: {total_pins} pins, {total_rects} rects, {total_polygons} polygons"
                 );
 
                 Ok(lef)
             }
             Err(e) => {
-                println!("❌ Failed to parse LEF file: {e:?}");
+                println!("[FAIL] Failed to parse LEF file: {e:?}");
                 Err(format!("Failed to parse LEF file: {e:?}").into())
             }
         }

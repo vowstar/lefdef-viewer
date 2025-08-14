@@ -163,7 +163,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
     let (input, name) = identifier(input)?;
     let (input, _) = multispace0(input)?;
 
-    println!("🔧 Parsing MACRO: {name}");
+    println!("[DBG] Parsing MACRO: {name}");
 
     // Parse macro content with PIN extraction
     let remaining = input;
@@ -193,7 +193,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
 
         if line.starts_with(&end_pattern) {
             println!(
-                "✅ Found macro: {} (size: {:.3}x{:.3}, pins: {})",
+                "[PASS] Found macro: {} (size: {:.3}x{:.3}, pins: {})",
                 name,
                 size_x,
                 size_y,
@@ -263,7 +263,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
             "PIN" if parts.len() > 1 => {
                 // Parse PIN section
                 let pin_name = parts[1].to_string();
-                println!("🔧   Parsing PIN: {pin_name}");
+                println!("[DBG]   Parsing PIN: {pin_name}");
 
                 let mut direction = String::new();
                 let mut use_type = String::new();
@@ -288,7 +288,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                 use_type = pin_parts[1].trim_end_matches(';').to_string();
                                 if use_type == "POWER" || use_type == "GROUND" {
                                     println!(
-                                        "🔧     Found POWER/GROUND pin: {pin_name} (USE: {use_type})"
+                                        "[DBG]     Found POWER/GROUND pin: {pin_name} (USE: {use_type})"
                                     );
                                 }
                             }
@@ -297,7 +297,9 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                             }
                             "PORT" => {
                                 // Parse PORT content
-                                println!("🔧     Found PORT in pin {pin_name} (USE: {use_type})");
+                                println!(
+                                    "[DBG]     Found PORT in pin {pin_name} (USE: {use_type})"
+                                );
                                 let mut rects = Vec::new();
                                 let mut polygons = Vec::new();
                                 let mut current_layer = String::new();
@@ -318,12 +320,12 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                     let port_parts: Vec<&str> =
                                         port_line.split_whitespace().collect();
                                     if !port_parts.is_empty() {
-                                        println!("🔧       Processing port line: {port_line}");
+                                        println!("[DBG]       Processing port line: {port_line}");
                                         match port_parts[0] {
                                             "LAYER" if port_parts.len() > 1 => {
                                                 current_layer = port_parts[1].to_string();
                                                 if use_type == "POWER" || use_type == "GROUND" {
-                                                    println!("🔧       POWER/GROUND pin {pin_name} using layer: {current_layer}");
+                                                    println!("[DBG]       POWER/GROUND pin {pin_name} using layer: {current_layer}");
                                                 }
                                             }
                                             "RECT" if port_parts.len() >= 5 => {
@@ -341,9 +343,9 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                                         yh,
                                                     });
                                                     if use_type == "POWER" || use_type == "GROUND" {
-                                                        println!("🔧       Added POWER/GROUND rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})");
+                                                        println!("[DBG]       Added POWER/GROUND rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})");
                                                     } else {
-                                                        println!("🔧       Added rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})");
+                                                        println!("[DBG]       Added rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})");
                                                     }
                                                 }
                                             }
@@ -414,7 +416,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                                         points,
                                                         is_hole,
                                                     });
-                                                    println!("🔧       Added polygon on {} with {} points ({}){}: {:?}",
+                                                    println!("[DBG]       Added polygon on {} with {} points ({}){}: {:?}",
                                                            current_layer, polygons.last().unwrap().points.len(),
                                                            if is_hole { "hole" } else { "solid" },
                                                            if let Some(mask) = mask_num { format!(" MASK {mask}") } else { String::new() },
@@ -449,7 +451,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
             }
             "OBS" => {
                 // Parse OBS section
-                println!("🔧   Parsing OBS");
+                println!("[DBG]   Parsing OBS");
                 let mut rects = Vec::new();
                 let mut polygons = Vec::new();
                 let mut current_layer = String::new();
@@ -463,7 +465,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
 
                     let obs_parts: Vec<&str> = obs_line.split_whitespace().collect();
                     if !obs_parts.is_empty() {
-                        println!("🔧     Processing OBS line: {obs_line}");
+                        println!("[DBG]     Processing OBS line: {obs_line}");
                         match obs_parts[0] {
                             "LAYER" if obs_parts.len() > 1 => {
                                 current_layer = obs_parts[1].to_string();
@@ -482,7 +484,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                         xh,
                                         yh,
                                     });
-                                    println!("🔧     Added OBS rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})");
+                                    println!("[DBG]     Added OBS rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})");
                                 }
                             }
                             "POLYGON" => {
@@ -544,7 +546,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                         is_hole,
                                     });
                                     println!(
-                                        "🔧     Added OBS polygon on {} with {} points ({}){}: {:?}",
+                                        "[DBG]     Added OBS polygon on {} with {} points ({}){}: {:?}",
                                         current_layer,
                                         polygons.last().unwrap().points.len(),
                                         if is_hole { "hole" } else { "solid" },
@@ -566,7 +568,7 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                 obstructions.push(LefObstruction { rects, polygons });
 
                 println!(
-                    "🔧   OBS parsing complete: {} rects, {} polygons",
+                    "[DBG]   OBS parsing complete: {} rects, {} polygons",
                     obstructions.last().unwrap().rects.len(),
                     obstructions.last().unwrap().polygons.len()
                 );

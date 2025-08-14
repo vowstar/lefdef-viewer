@@ -112,7 +112,7 @@ fn parse_gcell_grid(input: &str) -> IResult<&str, (Vec<DefGCellGrid>, Vec<DefGCe
 }
 
 fn parse_def_simple(input: &str) -> IResult<&str, Def> {
-    println!("🔧 Starting DEF parsing...");
+    println!("[DBG] Starting DEF parsing...");
 
     let mut die_area_points = Vec::new();
     let mut components = Vec::new();
@@ -138,7 +138,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
 
         match parts[0] {
             "DIEAREA" => {
-                println!("🔧   Found DIEAREA");
+                println!("[DBG]   Found DIEAREA");
 
                 // Collect all DIEAREA content across multiple lines until we find the semicolon
                 let mut diearea_content = String::new();
@@ -171,7 +171,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                             content_parts[j + 2].parse::<f64>(),
                         ) {
                             die_area_points.push((x, y));
-                            println!("🔧     Die area point: ({x:.1}, {y:.1})");
+                            println!("[DBG]     Die area point: ({x:.1}, {y:.1})");
                         }
                         j += 4; // Move past ( x y )
                     } else if content_parts[j] == ";" {
@@ -183,7 +183,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
             }
             "COMPONENTS" if parts.len() > 1 => {
                 if let Ok(num_components) = parts[1].parse::<usize>() {
-                    println!("🔧   Found COMPONENTS section with {num_components} components");
+                    println!("[DBG]   Found COMPONENTS section with {num_components} components");
                     i += 1;
 
                     // Use the new unified parsing framework
@@ -211,7 +211,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                                         "no placement".to_string()
                                     };
                                 println!(
-                                    "🔧     Component: {} ({}) {}",
+                                    "[DBG]     Component: {} ({}) {}",
                                     component.name, component.macro_name, placement_info
                                 );
                                 components.push(component);
@@ -219,7 +219,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                             i = next_index;
                         }
                         Err(e) => {
-                            println!("🔧   Error parsing COMPONENTS section: {e}");
+                            println!("[DBG]   Error parsing COMPONENTS section: {e}");
                             // Fallback: skip to END COMPONENTS
                             while i < lines.len() && !lines[i].trim().starts_with("END COMPONENTS")
                             {
@@ -231,7 +231,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
             }
             "PINS" if parts.len() > 1 => {
                 if let Ok(num_pins) = parts[1].parse::<usize>() {
-                    println!("🔧   Found PINS section with {num_pins} pins");
+                    println!("[DBG]   Found PINS section with {num_pins} pins");
                     i += 1;
 
                     // Use the new unified parsing framework
@@ -247,7 +247,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                         Ok((parsed_pins, next_index)) => {
                             for pin in parsed_pins {
                                 println!(
-                                    "🔧     Pin: {} at ({:.1}, {:.1}) dir={} use={}",
+                                    "[DBG]     Pin: {} at ({:.1}, {:.1}) dir={} use={}",
                                     pin.name, pin.x, pin.y, pin.direction, pin.use_type
                                 );
                                 pins.push(pin);
@@ -255,7 +255,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                             i = next_index;
                         }
                         Err(e) => {
-                            println!("🔧   Error parsing PINS section: {e}");
+                            println!("[DBG]   Error parsing PINS section: {e}");
                             // Fallback: skip to END PINS
                             while i < lines.len() && !lines[i].trim().starts_with("END PINS") {
                                 i += 1;
@@ -266,7 +266,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
             }
             "NETS" if parts.len() > 1 => {
                 if let Ok(num_nets) = parts[1].parse::<usize>() {
-                    println!("🔧   Found NETS section with {num_nets} nets");
+                    println!("[DBG]   Found NETS section with {num_nets} nets");
                     i += 1;
 
                     // Use the new unified parsing framework
@@ -282,7 +282,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                         Ok((parsed_nets, next_index)) => {
                             for net in parsed_nets {
                                 println!(
-                                    "🔧     Net: {} with {} instances, {} pins",
+                                    "[DBG]     Net: {} with {} instances, {} pins",
                                     net.name, net.connections, net.pins
                                 );
                                 nets.push(net);
@@ -290,7 +290,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                             i = next_index;
                         }
                         Err(e) => {
-                            println!("🔧   Error parsing NETS section: {e}");
+                            println!("[DBG]   Error parsing NETS section: {e}");
                             // Fallback: skip to END NETS
                             while i < lines.len() && !lines[i].trim().starts_with("END NETS") {
                                 i += 1;
@@ -301,7 +301,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
             }
             "VIAS" if parts.len() > 1 => {
                 if let Ok(num_vias) = parts[1].parse::<usize>() {
-                    println!("🔧   Found VIAS section with {num_vias} vias");
+                    println!("[DBG]   Found VIAS section with {num_vias} vias");
                     i += 1;
 
                     // Parse vias until END VIAS
@@ -315,7 +315,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                         if via_parts.len() >= 2 && via_parts[0] == "-" {
                             // Via definition: - viaName
                             let via_name = via_parts[1].to_string();
-                            println!("🔧     Parsing VIA: {via_name}");
+                            println!("[DBG]     Parsing VIA: {via_name}");
 
                             let mut layers = Vec::new();
 
@@ -382,7 +382,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                                                             layers.push(new_layer);
                                                         }
 
-                                                        println!("🔧       Added RECT on layer {} at ({:.1},{:.1}) -> ({:.1},{:.1})", 
+                                                        println!("[DBG]       Added RECT on layer {} at ({:.1},{:.1}) -> ({:.1},{:.1})", 
                                                                content_parts[2], xl, yl, xh, yh);
                                                     }
                                                 }
@@ -493,7 +493,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                                                             layers.push(new_layer);
                                                         }
 
-                                                        println!("🔧       Added POLYGON on layer {} with {} points{}: {:?}", 
+                                                        println!("[DBG]       Added POLYGON on layer {} with {} points{}: {:?}", 
                                                                layer_name, points.len(),
                                                                if let Some(mask) = mask_num { format!(" MASK {mask}") } else { String::new() },
                                                                points);
@@ -528,7 +528,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
     }
 
     println!(
-        "✅ DEF parsed: {} die points, {} components, {} pins",
+        "[PASS] DEF parsed: {} die points, {} components, {} pins",
         die_area_points.len(),
         components.len(),
         pins.len()
