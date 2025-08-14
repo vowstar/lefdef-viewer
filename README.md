@@ -57,7 +57,7 @@ cargo run --release
 
 ## Usage
 
-1. **Open Files**: Use File → Open LEF File or Open DEF File to load your files
+1. **Open Files**: Use File -> Open LEF File or Open DEF File to load your files
 2. **Navigate**: Use mouse drag to pan around the visualization
 3. **Zoom**: Use the zoom slider in the left panel or mouse wheel
 4. **View Details**: Enable "Show LEF Details" or "Show DEF Details" from the View menu for detailed information
