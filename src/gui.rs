@@ -33,8 +33,8 @@ enum LoadingState {
 /// File loading result message
 #[derive(Debug)]
 enum LoadingMessage {
-    LefLoaded(Result<Lef, String>, String), // Result and file path
-    DefLoaded(Box<Result<Def, String>>, String), // Result and file path
+    LefLoaded(Result<(Lef, String), String>, String), // Result(Lef + hash), file path
+    DefLoaded(Box<Result<Def, String>>, String),      // Result and file path
 }
 
 /// Edge proximity detection result
@@ -55,11 +55,12 @@ struct TextPositioning {
     angle: f32, // Rotation angle in radians
 }
 
-/// Loaded LEF file with path information
+/// Loaded LEF file with path and hash information
 #[derive(Clone)]
 struct LoadedLefFile {
     path: String,
     data: Lef,
+    file_hash: String, // BLAKE3 hash of file content for deduplication and stable UI IDs
 }
 
 pub struct LefDefViewer {
@@ -102,6 +103,22 @@ pub struct LefDefViewer {
 }
 
 impl LefDefViewer {
+    /// Calculate BLAKE3 hash of a file for deduplication
+    fn calculate_file_hash(file_path: &str) -> Result<String, std::io::Error> {
+        use std::io::Read;
+        let mut file = std::fs::File::open(file_path)?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buffer = vec![0; 65536]; // 64KB buffer for efficient reading
+        loop {
+            let bytes_read = file.read(&mut buffer)?;
+            if bytes_read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..bytes_read]);
+        }
+        Ok(hasher.finalize().to_hex().to_string())
+    }
+
     pub fn new() -> Self {
         Self {
             lef_files: Vec::new(),
@@ -171,8 +188,8 @@ impl LefDefViewer {
 
                     match message {
                         LoadingMessage::LefLoaded(result, path) => match result {
-                            Ok(lef) => {
-                                self.load_lef_file_sync(lef, path);
+                            Ok((lef, hash)) => {
+                                self.load_lef_file_sync(lef, path, hash);
                             }
                             Err(error) => {
                                 self.error_message = Some(error);
@@ -203,7 +220,7 @@ impl LefDefViewer {
         }
     }
 
-    fn load_lef_file_sync(&mut self, lef: Lef, path: String) {
+    fn load_lef_file_sync(&mut self, lef: Lef, path: String, file_hash: String) {
         // This is the synchronized version of LEF loading (after async completion)
         // Add new LEF file to the collection (append mode, not replace)
 
@@ -256,7 +273,11 @@ impl LefDefViewer {
         }
 
         // Add the new LEF file to collection
-        self.lef_files.push(LoadedLefFile { path, data: lef });
+        self.lef_files.push(LoadedLefFile {
+            path,
+            data: lef,
+            file_hash,
+        });
 
         // Initialize voltage configuration with first LEF file's smart defaults
         if self.lef_files.len() == 1 {
@@ -734,6 +755,34 @@ impl LefDefViewer {
     }
 
     fn start_lef_file_loading(&mut self, path: String) {
+        // Calculate file hash for deduplication
+        let file_hash = match Self::calculate_file_hash(&path) {
+            Ok(hash) => hash,
+            Err(e) => {
+                self.error_message = Some(format!("Failed to read file: {}", e));
+                return;
+            }
+        };
+
+        // Check if this file is already loaded (by content hash)
+        for loaded_file in &self.lef_files {
+            if loaded_file.file_hash == file_hash {
+                let file_name = Path::new(&path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&path);
+                let loaded_file_name = Path::new(&loaded_file.path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&loaded_file.path);
+                self.error_message = Some(format!(
+                    "File already loaded (same content): {}\nPreviously loaded as: {}\nSkipping duplicate load.",
+                    file_name, loaded_file_name
+                ));
+                return;
+            }
+        }
+
         // Extract file name for display
         let file_name = Path::new(&path)
             .file_name()
@@ -753,11 +802,12 @@ impl LefDefViewer {
         let (tx, rx) = mpsc::channel();
         self.loading_receiver = Some(rx);
 
-        // Start loading in background thread
+        // Start loading in background thread (pass hash to avoid recalculation)
+        let hash_clone = file_hash.clone();
         thread::spawn(move || {
             let reader = LefReader::new();
             let result = match reader.read(&path) {
-                Ok(lef) => Ok(lef),
+                Ok(lef) => Ok((lef, hash_clone)),
                 Err(e) => Err(format!("Failed to load LEF file: {e}")),
             };
             let _ = tx.send(LoadingMessage::LefLoaded(result, path));
@@ -766,6 +816,15 @@ impl LefDefViewer {
 
     #[allow(dead_code)]
     fn load_lef_file(&mut self, path: String) {
+        // Calculate file hash for deduplication
+        let file_hash = match Self::calculate_file_hash(&path) {
+            Ok(hash) => hash,
+            Err(e) => {
+                self.error_message = Some(format!("Failed to read file: {}", e));
+                return;
+            }
+        };
+
         let reader = LefReader::new();
         match reader.read(&path) {
             Ok(lef) => {
@@ -860,6 +919,7 @@ impl LefDefViewer {
                 self.lef_files.push(LoadedLefFile {
                     path: path.clone(),
                     data: lef,
+                    file_hash,
                 });
 
                 // Initialize voltage configuration with smart defaults
@@ -1430,16 +1490,20 @@ impl LefDefViewer {
                 });
 
                 // Collect and filter macros from all LEF files
-                let all_macros: Vec<&crate::lef::LefMacro> = self
+                // Store (lef_file_index, macro_def) to generate unique IDs for duplicate macro names
+                let all_macros: Vec<(usize, &crate::lef::LefMacro)> = self
                     .lef_files
                     .iter()
-                    .flat_map(|lef_file| lef_file.data.macros.iter())
+                    .enumerate()
+                    .flat_map(|(idx, lef_file)| {
+                        lef_file.data.macros.iter().map(move |macro_def| (idx, macro_def))
+                    })
                     .collect();
 
-                let filtered_macros: Vec<&crate::lef::LefMacro> = all_macros
+                let filtered_macros: Vec<(usize, &crate::lef::LefMacro)> = all_macros
                     .iter()
                     .copied()
-                    .filter(|macro_def| {
+                    .filter(|(_, macro_def)| {
                         if self.macro_filter.is_empty() {
                             true
                         } else {
@@ -1454,7 +1518,7 @@ impl LefDefViewer {
                     .id_salt("lef_macros_list_scroll")
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        for macro_def in filtered_macros {
+                        for (lef_file_idx, macro_def) in filtered_macros {
                             let mut is_selected = self.selected_cells.contains(&macro_def.name);
                             if ui.checkbox(&mut is_selected, &macro_def.name).clicked() {
                                 if is_selected {
@@ -1464,7 +1528,19 @@ impl LefDefViewer {
                                 }
                             }
 
-                            ui.collapsing(format!("Details: {}", &macro_def.name), |ui| {
+                            // Use push_id to create unique ID scope for each macro (handles duplicate names from different files)
+                            ui.push_id(format!("macro_{}_{}", lef_file_idx, &macro_def.name), |ui| {
+                                // Show source file in header if multiple LEF files are loaded
+                                let details_header = if self.lef_files.len() > 1 {
+                                    let source_file = std::path::Path::new(&self.lef_files[lef_file_idx].path)
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("unknown");
+                                    format!("Details: {} (from {})", &macro_def.name, source_file)
+                                } else {
+                                    format!("Details: {}", &macro_def.name)
+                                };
+                                ui.collapsing(details_header, |ui| {
                                 ui.label(format!("Class: {}", macro_def.class));
                                 ui.label(format!(
                                     "Size: {:.3} x {:.3}",
@@ -1619,6 +1695,7 @@ impl LefDefViewer {
                                     });
                                 }
                             });
+                            });  // End of push_id scope
                         }
                     });
 
