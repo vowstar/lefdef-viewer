@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2025 Huang Rui <vowstar@gmail.com>
 
 use eframe::egui;
-use rfd::FileDialog;
-use std::sync::Arc;
-use lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, FillVertex, VertexBuffers};
 use lyon_tessellation::math::{point, Point};
 use lyon_tessellation::path::Path as LyonPath;
+use lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, FillVertex, VertexBuffers};
+use rfd::FileDialog;
+use std::sync::Arc;
 
 use crate::def::{reader::DefReader, Def};
 use crate::export::{self, VoltageConfig};
@@ -484,23 +484,25 @@ impl LefDefViewer {
         let mut buffers: VertexBuffers<Point, u16> = VertexBuffers::new();
         let mut tessellator = FillTessellator::new();
         {
-            tessellator.tessellate_path(
-                &path,
-                &FillOptions::default(),
-                &mut BuffersBuilder::new(&mut buffers, |vertex: FillVertex| {
-                    vertex.position()
-                }),
-            ).unwrap();
+            tessellator
+                .tessellate_path(
+                    &path,
+                    &FillOptions::default(),
+                    &mut BuffersBuilder::new(&mut buffers, |vertex: FillVertex| vertex.position()),
+                )
+                .unwrap();
         }
 
         // Convert to egui mesh
-        mesh.vertices = buffers.vertices.iter().map(|v| {
-            egui::epaint::Vertex {
+        mesh.vertices = buffers
+            .vertices
+            .iter()
+            .map(|v| egui::epaint::Vertex {
                 pos: egui::pos2(v.x, v.y),
                 uv: egui::pos2(0.0, 0.0),
                 color,
-            }
-        }).collect();
+            })
+            .collect();
         mesh.indices = buffers.indices.iter().map(|&i| i as u32).collect();
 
         mesh
@@ -524,14 +526,12 @@ impl LefDefViewer {
                 }
 
                 // let mut macro_has_content = false;
-                let macro_x = macro_def.origin.0 as f32;
-                let macro_y = macro_def.origin.1 as f32;
-
-                // Include macro size bounds
-                let left = macro_x;
-                let bottom = macro_y;
-                let right = left + macro_def.size_x as f32;
-                let top = bottom + macro_def.size_y as f32;
+                // OUTLINE box is positioned at (0,0) with SIZE dimensions
+                // ORIGIN is not used for OUTLINE positioning
+                let left = 0.0;
+                let bottom = 0.0;
+                let right = macro_def.size_x as f32;
+                let top = macro_def.size_y as f32;
 
                 min_x = min_x.min(left);
                 min_y = min_y.min(bottom);
@@ -543,13 +543,14 @@ impl LefDefViewer {
                 for pin in &macro_def.pins {
                     for port in &pin.ports {
                         // Include rectangles
+                        // PIN coordinates are relative to ORIGIN, so add ORIGIN offset
                         for rect in &port.rects {
                             let detailed_layer = format!("{}.PIN", rect.layer);
                             if self.visible_layers.contains(&detailed_layer) {
-                                let rect_left = macro_x + rect.xl as f32;
-                                let rect_bottom = macro_y + rect.yl as f32;
-                                let rect_right = macro_x + rect.xh as f32;
-                                let rect_top = macro_y + rect.yh as f32;
+                                let rect_left = macro_def.origin.0 as f32 + rect.xl as f32;
+                                let rect_bottom = macro_def.origin.1 as f32 + rect.yl as f32;
+                                let rect_right = macro_def.origin.0 as f32 + rect.xh as f32;
+                                let rect_top = macro_def.origin.1 as f32 + rect.yh as f32;
 
                                 min_x = min_x.min(rect_left);
                                 min_y = min_y.min(rect_bottom);
@@ -560,12 +561,13 @@ impl LefDefViewer {
                         }
 
                         // Include polygons
+                        // PIN coordinates are relative to ORIGIN, so add ORIGIN offset
                         for polygon in &port.polygons {
                             let detailed_layer = format!("{}.PIN", polygon.layer);
                             if self.visible_layers.contains(&detailed_layer) {
                                 for (px, py) in &polygon.points {
-                                    let point_x = macro_x + *px as f32;
-                                    let point_y = macro_y + *py as f32;
+                                    let point_x = macro_def.origin.0 as f32 + *px as f32;
+                                    let point_y = macro_def.origin.1 as f32 + *py as f32;
 
                                     min_x = min_x.min(point_x);
                                     min_y = min_y.min(point_y);
@@ -581,13 +583,14 @@ impl LefDefViewer {
                 // Include obstruction shapes in bounds calculation
                 for obs in &macro_def.obs {
                     // Include obstruction rectangles
+                    // OBS coordinates are relative to ORIGIN, so add ORIGIN offset
                     for rect in &obs.rects {
                         let detailed_layer = format!("{}.OBS", rect.layer);
                         if self.visible_layers.contains(&detailed_layer) {
-                            let rect_left = macro_x + rect.xl as f32;
-                            let rect_bottom = macro_y + rect.yl as f32;
-                            let rect_right = macro_x + rect.xh as f32;
-                            let rect_top = macro_y + rect.yh as f32;
+                            let rect_left = macro_def.origin.0 as f32 + rect.xl as f32;
+                            let rect_bottom = macro_def.origin.1 as f32 + rect.yl as f32;
+                            let rect_right = macro_def.origin.0 as f32 + rect.xh as f32;
+                            let rect_top = macro_def.origin.1 as f32 + rect.yh as f32;
 
                             min_x = min_x.min(rect_left);
                             min_y = min_y.min(rect_bottom);
@@ -598,12 +601,13 @@ impl LefDefViewer {
                     }
 
                     // Include obstruction polygons
+                    // OBS coordinates are relative to ORIGIN, so add ORIGIN offset
                     for polygon in &obs.polygons {
                         let detailed_layer = format!("{}.OBS", polygon.layer);
                         if self.visible_layers.contains(&detailed_layer) {
                             for (px, py) in &polygon.points {
-                                let point_x = macro_x + *px as f32;
-                                let point_y = macro_y + *py as f32;
+                                let point_x = macro_def.origin.0 as f32 + *px as f32;
+                                let point_y = macro_def.origin.1 as f32 + *py as f32;
 
                                 min_x = min_x.min(point_x);
                                 min_y = min_y.min(point_y);
@@ -655,13 +659,13 @@ impl LefDefViewer {
                 }
 
                 // Only use macro size bounds (OUTLINE)
+                // OUTLINE box is positioned at (0,0) with SIZE dimensions
+                // ORIGIN is not used for OUTLINE positioning
                 if self.visible_layers.contains("OUTLINE") {
-                    let macro_x = macro_def.origin.0 as f32;
-                    let macro_y = macro_def.origin.1 as f32;
-                    let left = macro_x;
-                    let bottom = macro_y;
-                    let right = left + macro_def.size_x as f32;
-                    let top = bottom + macro_def.size_y as f32;
+                    let left = 0.0;
+                    let bottom = 0.0;
+                    let right = macro_def.size_x as f32;
+                    let top = macro_def.size_y as f32;
 
                     min_x = min_x.min(left);
                     min_y = min_y.min(bottom);
@@ -1848,12 +1852,20 @@ impl LefDefViewer {
                             // PIN coordinates are relative to ORIGIN, so add ORIGIN offset
                             let pin_rect = egui::Rect::from_min_max(
                                 egui::pos2(
-                                    outline_x + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom),
-                                    outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh) as f32 * self.zoom),
+                                    outline_x
+                                        + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom),
+                                    outline_y
+                                        + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh)
+                                            as f32
+                                            * self.zoom),
                                 ),
                                 egui::pos2(
-                                    outline_x + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom),
-                                    outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl) as f32 * self.zoom),
+                                    outline_x
+                                        + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom),
+                                    outline_y
+                                        + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl)
+                                            as f32
+                                            * self.zoom),
                                 ),
                             );
 
@@ -1861,10 +1873,16 @@ impl LefDefViewer {
                             painter.rect_filled(pin_rect, 0.0, color);
 
                             // Update pin bounds for text positioning (with Y-flip and ORIGIN offset)
-                            let rect_min_x = outline_x + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom);
-                            let rect_min_y = outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh) as f32 * self.zoom);
-                            let rect_max_x = outline_x + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom);
-                            let rect_max_y = outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl) as f32 * self.zoom);
+                            let rect_min_x = outline_x
+                                + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom);
+                            let rect_min_y = outline_y
+                                + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh) as f32
+                                    * self.zoom);
+                            let rect_max_x = outline_x
+                                + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom);
+                            let rect_max_y = outline_y
+                                + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl) as f32
+                                    * self.zoom);
 
                             if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
                                 pin_bounds = Some((
@@ -1916,8 +1934,13 @@ impl LefDefViewer {
                                         .iter()
                                         .map(|(x, y)| {
                                             egui::pos2(
-                                                outline_x + ((macro_def.origin.0 + *x) as f32 * self.zoom),
-                                                outline_y + ((macro_def.size_y - macro_def.origin.1 - *y) as f32 * self.zoom),
+                                                outline_x
+                                                    + ((macro_def.origin.0 + *x) as f32
+                                                        * self.zoom),
+                                                outline_y
+                                                    + ((macro_def.size_y - macro_def.origin.1 - *y)
+                                                        as f32
+                                                        * self.zoom),
                                             )
                                         })
                                         .collect();
@@ -1949,8 +1972,9 @@ impl LefDefViewer {
                                                 max_y.max(poly_max_y),
                                             ));
                                         } else {
-                                            pin_bounds =
-                                                Some((poly_min_x, poly_min_y, poly_max_x, poly_max_y));
+                                            pin_bounds = Some((
+                                                poly_min_x, poly_min_y, poly_max_x, poly_max_y,
+                                            ));
                                         }
                                     }
                                 }
@@ -1998,12 +2022,20 @@ impl LefDefViewer {
                         // OBS coordinates are relative to ORIGIN, so add ORIGIN offset
                         let obs_rect = egui::Rect::from_min_max(
                             egui::pos2(
-                                outline_x + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom),
-                                outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh) as f32 * self.zoom),
+                                outline_x
+                                    + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom),
+                                outline_y
+                                    + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh)
+                                        as f32
+                                        * self.zoom),
                             ),
                             egui::pos2(
-                                outline_x + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom),
-                                outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl) as f32 * self.zoom),
+                                outline_x
+                                    + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom),
+                                outline_y
+                                    + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl)
+                                        as f32
+                                        * self.zoom),
                             ),
                         );
                         let color = self.get_layer_color(&detailed_layer);
@@ -2118,8 +2150,12 @@ impl LefDefViewer {
                                     .iter()
                                     .map(|(x, y)| {
                                         egui::pos2(
-                                            outline_x + ((macro_def.origin.0 + *x) as f32 * self.zoom),
-                                            outline_y + ((macro_def.size_y - macro_def.origin.1 - *y) as f32 * self.zoom),
+                                            outline_x
+                                                + ((macro_def.origin.0 + *x) as f32 * self.zoom),
+                                            outline_y
+                                                + ((macro_def.size_y - macro_def.origin.1 - *y)
+                                                    as f32
+                                                    * self.zoom),
                                         )
                                     })
                                     .collect();
