@@ -2,8 +2,11 @@
 // SPDX-FileCopyrightText: 2025 Huang Rui <vowstar@gmail.com>
 
 use eframe::egui;
-use egui::epaint::{PathShape, PathStroke};
 use rfd::FileDialog;
+use std::sync::Arc;
+use lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, FillVertex, VertexBuffers};
+use lyon_tessellation::math::{point, Point};
+use lyon_tessellation::path::Path as LyonPath;
 
 use crate::def::{reader::DefReader, Def};
 use crate::export::{self, VoltageConfig};
@@ -460,241 +463,50 @@ impl LefDefViewer {
         base_order + type_order
     }
 
+    // Tessellate a concave polygon into triangles using lyon
+    fn tessellate_polygon(points: &[egui::Pos2], color: egui::Color32) -> egui::epaint::Mesh {
+        let mut mesh = egui::epaint::Mesh::default();
+
+        if points.len() < 3 {
+            return mesh;
+        }
+
+        // Build lyon path
+        let mut builder = LyonPath::builder();
+        builder.begin(point(points[0].x, points[0].y));
+        for p in &points[1..] {
+            builder.line_to(point(p.x, p.y));
+        }
+        builder.end(true);
+        let path = builder.build();
+
+        // Tessellate
+        let mut buffers: VertexBuffers<Point, u16> = VertexBuffers::new();
+        let mut tessellator = FillTessellator::new();
+        {
+            tessellator.tessellate_path(
+                &path,
+                &FillOptions::default(),
+                &mut BuffersBuilder::new(&mut buffers, |vertex: FillVertex| {
+                    vertex.position()
+                }),
+            ).unwrap();
+        }
+
+        // Convert to egui mesh
+        mesh.vertices = buffers.vertices.iter().map(|v| {
+            egui::epaint::Vertex {
+                pos: egui::pos2(v.x, v.y),
+                uv: egui::pos2(0.0, 0.0),
+                color,
+            }
+        }).collect();
+        mesh.indices = buffers.indices.iter().map(|&i| i as u32).collect();
+
+        mesh
+    }
+
     // Utility function to calculate polygon area (shoelace formula)
-    fn polygon_area(points: &[egui::Pos2]) -> f32 {
-        if points.len() < 3 {
-            return 0.0;
-        }
-
-        let mut area = 0.0;
-        let n = points.len();
-        for i in 0..n {
-            let j = (i + 1) % n;
-            area += (points[j].x - points[i].x) * (points[j].y + points[i].y);
-        }
-        area.abs() * 0.5
-    }
-
-    // Utility function to check if a polygon is convex
-    #[allow(dead_code)]
-    fn is_convex(points: &[egui::Pos2]) -> bool {
-        if points.len() < 3 {
-            return true;
-        }
-
-        let n = points.len();
-        let mut sign = 0;
-
-        for i in 0..n {
-            let p1 = points[i];
-            let p2 = points[(i + 1) % n];
-            let p3 = points[(i + 2) % n];
-
-            // Cross product to determine turn direction
-            let cross = (p2.x - p1.x) * (p3.y - p2.y) - (p2.y - p1.y) * (p3.x - p2.x);
-
-            if cross.abs() > 1e-6 {
-                // Avoid floating point precision issues
-                let current_sign = if cross > 0.0 { 1 } else { -1 };
-                if sign == 0 {
-                    sign = current_sign;
-                } else if sign != current_sign {
-                    return false; // Direction change means non-convex
-                }
-            }
-        }
-
-        true
-    }
-
-    // Remove duplicate consecutive vertices
-    fn deduplicate_vertices(points: &[egui::Pos2]) -> Vec<egui::Pos2> {
-        if points.is_empty() {
-            return Vec::new();
-        }
-
-        let mut result = Vec::new();
-        let mut last_point = points[0];
-        result.push(last_point);
-
-        for &point in points.iter().skip(1) {
-            // Only add if different from last point (with small tolerance)
-            if (point.x - last_point.x).abs() > 1e-6 || (point.y - last_point.y).abs() > 1e-6 {
-                result.push(point);
-                last_point = point;
-            }
-        }
-
-        result
-    }
-
-    fn compute_final_polygons(
-        &self,
-        additive_polygons: &[&crate::lef::LefPolygon],
-        subtractive_polygons: &[&crate::lef::LefPolygon],
-        offset_x: f32,
-        offset_y: f32,
-    ) -> Vec<Vec<egui::Pos2>> {
-        use geo::{BooleanOps, Coord, LineString, Polygon as GeoPolygon};
-        let mut final_polygons = Vec::new();
-
-        // Robustness: if no additive polygons but we have subtractive polygons,
-        // render the subtractive polygons as outlines to show their contours
-        if additive_polygons.is_empty() {
-            if !subtractive_polygons.is_empty() {
-                // Fallback: render subtractive polygons as visible shapes
-                for lef_polygon in subtractive_polygons {
-                    if lef_polygon.points.len() >= 3 {
-                        let mut screen_points = Vec::new();
-                        for (px, py) in &lef_polygon.points {
-                            let screen_x = offset_x + (*px as f32 * self.zoom);
-                            let screen_y = offset_y + (*py as f32 * self.zoom);
-                            screen_points.push(egui::pos2(screen_x, screen_y));
-                        }
-
-                        if screen_points.len() >= 3 {
-                            let deduplicated = Self::deduplicate_vertices(&screen_points);
-                            if deduplicated.len() >= 3 {
-                                let area = Self::polygon_area(&deduplicated);
-                                if area > 1e-6 {
-                                    final_polygons.push(deduplicated);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            return final_polygons;
-        }
-
-        // Start with union of all additive polygons
-        let mut result: Option<geo::MultiPolygon<f64>> = None;
-
-        // Union all additive polygons first
-        for lef_polygon in additive_polygons {
-            if lef_polygon.points.len() >= 3 {
-                // Convert LEF polygon to geo polygon
-                let coords: Vec<Coord<f64>> = lef_polygon
-                    .points
-                    .iter()
-                    .map(|(x, y)| Coord { x: *x, y: *y })
-                    .collect();
-
-                // Ensure the polygon is closed
-                let mut line_coords = coords.clone();
-                if line_coords.first() != line_coords.last() {
-                    if let Some(first) = line_coords.first().cloned() {
-                        line_coords.push(first);
-                    }
-                }
-
-                if line_coords.len() >= 4 {
-                    // At least 3 unique points + closing point
-                    {
-                        let line_string = LineString::from(line_coords);
-                        let geo_polygon = GeoPolygon::new(line_string, vec![]);
-
-                        if let Some(existing_result) = result {
-                            // Union with existing result
-                            let geo_multi_polygon: geo::MultiPolygon<f64> = geo_polygon.into();
-                            result = Some(existing_result.union(&geo_multi_polygon));
-                        } else {
-                            // First polygon
-                            result = Some(geo_polygon.into());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Subtract all subtractive polygons from the result
-        if let Some(mut current_result) = result {
-            for lef_polygon in subtractive_polygons {
-                if lef_polygon.points.len() >= 3 {
-                    // Convert LEF polygon to geo polygon
-                    let coords: Vec<Coord<f64>> = lef_polygon
-                        .points
-                        .iter()
-                        .map(|(x, y)| Coord { x: *x, y: *y })
-                        .collect();
-
-                    // Ensure the polygon is closed
-                    let mut line_coords = coords.clone();
-                    if line_coords.first() != line_coords.last() {
-                        if let Some(first) = line_coords.first().cloned() {
-                            line_coords.push(first);
-                        }
-                    }
-
-                    if line_coords.len() >= 4 {
-                        // At least 3 unique points + closing point
-                        {
-                            let line_string = LineString::from(line_coords);
-                            let geo_polygon = GeoPolygon::new(line_string, vec![]);
-
-                            // Subtract from current result
-                            let geo_multi_polygon: geo::MultiPolygon<f64> = geo_polygon.into();
-                            current_result = current_result.difference(&geo_multi_polygon);
-                        }
-                    }
-                }
-            }
-
-            result = Some(current_result);
-        }
-
-        // Convert result back to screen coordinates for rendering
-        if let Some(multi_polygon) = result {
-            for polygon in multi_polygon {
-                let exterior = polygon.exterior();
-                let mut screen_points = Vec::new();
-
-                for coord in exterior.coords() {
-                    let screen_x = offset_x + (coord.x as f32 * self.zoom);
-                    let screen_y = offset_y + (coord.y as f32 * self.zoom);
-                    screen_points.push(egui::pos2(screen_x, screen_y));
-                }
-
-                if screen_points.len() >= 3 {
-                    // Apply vertex deduplication
-                    let deduplicated = Self::deduplicate_vertices(&screen_points);
-
-                    // Filter out dust (microscopic polygons)
-                    if deduplicated.len() >= 3 {
-                        let area = Self::polygon_area(&deduplicated);
-                        if area > 1e-6 {
-                            // Minimum area threshold
-                            final_polygons.push(deduplicated);
-                        }
-                    }
-                }
-
-                // Skip holes for now - they should be represented as empty space, not filled polygons
-                // The boolean operations already handle holes correctly by creating the exterior ring
-                // with the proper shape. Adding interior rings as separate filled polygons creates
-                // visual artifacts.
-                //
-                // TODO: If hole visualization is needed, render them as outlines or with background color
-                /*
-                for interior in polygon.interiors() {
-                    let mut hole_points = Vec::new();
-                    for coord in interior.coords() {
-                        let screen_x = offset_x + (coord.x as f32 * self.zoom);
-                        let screen_y = offset_y + (coord.y as f32 * self.zoom);
-                        hole_points.push(egui::pos2(screen_x, screen_y));
-                    }
-                    if hole_points.len() >= 3 {
-                        // Render holes as outlines only to show their boundaries
-                        final_polygons.push(hole_points);
-                    }
-                }
-                */
-            }
-        }
-
-        final_polygons
-    }
-
     /// Calculate bounds of all visible elements
     #[allow(dead_code)]
     fn calculate_bounds(&self) -> Option<(f32, f32, f32, f32)> {
@@ -2030,25 +1842,27 @@ impl LefDefViewer {
 
                             has_visible_shapes = true;
 
+                            // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
+                            // yl is bottom edge, yh is top edge in LEF coordinates
                             let pin_rect = egui::Rect::from_min_max(
                                 egui::pos2(
                                     outline_x + (rect_data.xl as f32 * self.zoom),
-                                    outline_y + (rect_data.yl as f32 * self.zoom),
+                                    outline_y + (macro_def.size_y as f32 - rect_data.yh as f32) * self.zoom,
                                 ),
                                 egui::pos2(
                                     outline_x + (rect_data.xh as f32 * self.zoom),
-                                    outline_y + (rect_data.yh as f32 * self.zoom),
+                                    outline_y + (macro_def.size_y as f32 - rect_data.yl as f32) * self.zoom,
                                 ),
                             );
 
                             let color = self.get_layer_color(&detailed_layer);
                             painter.rect_filled(pin_rect, 0.0, color);
 
-                            // Update pin bounds for text positioning
+                            // Update pin bounds for text positioning (with Y-flip)
                             let rect_min_x = outline_x + (rect_data.xl as f32 * self.zoom);
-                            let rect_min_y = outline_y + (rect_data.yl as f32 * self.zoom);
+                            let rect_min_y = outline_y + (macro_def.size_y as f32 - rect_data.yh as f32) * self.zoom;
                             let rect_max_x = outline_x + (rect_data.xh as f32 * self.zoom);
-                            let rect_max_y = outline_y + (rect_data.yh as f32 * self.zoom);
+                            let rect_max_y = outline_y + (macro_def.size_y as f32 - rect_data.yl as f32) * self.zoom;
 
                             if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
                                 pin_bounds = Some((
@@ -2089,70 +1903,52 @@ impl LefDefViewer {
                             has_visible_shapes = true;
                             let color = self.get_layer_color(&layer_name);
 
-                            // Separate counterclockwise (additive) and clockwise (subtractive) polygons
-                            let mut additive_polygons = Vec::new();
-                            let mut subtractive_polygons = Vec::new();
-
+                            // Draw each polygon independently (LEF only has positive shapes)
                             for polygon_data in &polygons {
                                 if polygon_data.points.len() >= 3 {
-                                    // LEF specification: counterclockwise = solid areas, clockwise = holes
-                                    if polygon_data.is_hole {
-                                        // Clockwise -> hole/void
-                                        subtractive_polygons.push(polygon_data);
-                                    } else {
-                                        // Counterclockwise -> solid
-                                        additive_polygons.push(polygon_data);
-                                    }
-                                }
-                            }
+                                    // Convert LEF coordinates to screen coordinates
+                                    // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
+                                    let screen_points: Vec<egui::Pos2> = polygon_data
+                                        .points
+                                        .iter()
+                                        .map(|(x, y)| {
+                                            egui::pos2(
+                                                outline_x + (*x as f32 * self.zoom),
+                                                outline_y + (macro_def.size_y as f32 - *y as f32) * self.zoom,
+                                            )
+                                        })
+                                        .collect();
 
-                            // Compute the final polygons after boolean operations
-                            let additive_refs: Vec<&crate::lef::LefPolygon> =
-                                additive_polygons.iter().map(|&&p| p).collect();
-                            let subtractive_refs: Vec<&crate::lef::LefPolygon> =
-                                subtractive_polygons.iter().map(|&&p| p).collect();
-                            let final_polygons = self.compute_final_polygons(
-                                &additive_refs[..],
-                                &subtractive_refs[..],
-                                outline_x,
-                                outline_y,
-                            );
+                                    if screen_points.len() >= 3 {
+                                        // Calculate bounds for text positioning
+                                        let mut poly_min_x = f32::INFINITY;
+                                        let mut poly_min_y = f32::INFINITY;
+                                        let mut poly_max_x = f32::NEG_INFINITY;
+                                        let mut poly_max_y = f32::NEG_INFINITY;
 
-                            // Render the final computed polygons
-                            for screen_points in final_polygons.iter() {
-                                if screen_points.len() >= 3 {
-                                    // Calculate bounds for text positioning
-                                    let mut poly_min_x = f32::INFINITY;
-                                    let mut poly_min_y = f32::INFINITY;
-                                    let mut poly_max_x = f32::NEG_INFINITY;
-                                    let mut poly_max_y = f32::NEG_INFINITY;
+                                        for point in &screen_points {
+                                            poly_min_x = poly_min_x.min(point.x);
+                                            poly_min_y = poly_min_y.min(point.y);
+                                            poly_max_x = poly_max_x.max(point.x);
+                                            poly_max_y = poly_max_y.max(point.y);
+                                        }
 
-                                    for point in screen_points {
-                                        poly_min_x = poly_min_x.min(point.x);
-                                        poly_min_y = poly_min_y.min(point.y);
-                                        poly_max_x = poly_max_x.max(point.x);
-                                        poly_max_y = poly_max_y.max(point.y);
-                                    }
+                                        // Use lyon tessellation for concave polygon fill
+                                        let mesh = Self::tessellate_polygon(&screen_points, color);
+                                        painter.add(egui::Shape::Mesh(Arc::new(mesh)));
 
-                                    // --- draw filled polygon, irrespective of convexity ---
-                                    painter.add(egui::Shape::Path(PathShape {
-                                        points: screen_points.clone(), // already deduped
-                                        closed: true,
-                                        fill: color,
-                                        stroke: PathStroke::NONE,
-                                    }));
-
-                                    // Update pin bounds for text positioning
-                                    if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
-                                        pin_bounds = Some((
-                                            min_x.min(poly_min_x),
-                                            min_y.min(poly_min_y),
-                                            max_x.max(poly_max_x),
-                                            max_y.max(poly_max_y),
-                                        ));
-                                    } else {
-                                        pin_bounds =
-                                            Some((poly_min_x, poly_min_y, poly_max_x, poly_max_y));
+                                        // Update pin bounds for text positioning
+                                        if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
+                                            pin_bounds = Some((
+                                                min_x.min(poly_min_x),
+                                                min_y.min(poly_min_y),
+                                                max_x.max(poly_max_x),
+                                                max_y.max(poly_max_y),
+                                            ));
+                                        } else {
+                                            pin_bounds =
+                                                Some((poly_min_x, poly_min_y, poly_max_x, poly_max_y));
+                                        }
                                     }
                                 }
                             }
@@ -2195,14 +1991,15 @@ impl LefDefViewer {
                             continue;
                         }
 
+                        // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
                         let obs_rect = egui::Rect::from_min_max(
                             egui::pos2(
                                 outline_x + (rect_data.xl as f32 * self.zoom),
-                                outline_y + (rect_data.yl as f32 * self.zoom),
+                                outline_y + (macro_def.size_y as f32 - rect_data.yh as f32) * self.zoom,
                             ),
                             egui::pos2(
                                 outline_x + (rect_data.xh as f32 * self.zoom),
-                                outline_y + (rect_data.yh as f32 * self.zoom),
+                                outline_y + (macro_def.size_y as f32 - rect_data.yl as f32) * self.zoom,
                             ),
                         );
                         let color = self.get_layer_color(&detailed_layer);
@@ -2306,78 +2103,68 @@ impl LefDefViewer {
                     for (layer_name, polygons) in sorted_obs_layers {
                         let color = self.get_layer_color(&layer_name);
 
-                        // Separate counterclockwise (additive) and clockwise (subtractive) polygons
-                        let mut additive_polygons = Vec::new();
-                        let mut subtractive_polygons = Vec::new();
-
+                        // Draw each OBS polygon independently (LEF only has positive shapes)
                         for polygon_data in &polygons {
                             if polygon_data.points.len() >= 3 {
-                                // LEF specification: counterclockwise = solid areas, clockwise = holes
-                                if polygon_data.is_hole {
-                                    // Clockwise -> hole/void
-                                    subtractive_polygons.push(polygon_data);
-                                } else {
-                                    // Counterclockwise -> solid
-                                    additive_polygons.push(polygon_data);
-                                }
-                            }
-                        }
+                                // Convert LEF coordinates to screen coordinates
+                                // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
+                                let mut screen_points: Vec<egui::Pos2> = polygon_data
+                                    .points
+                                    .iter()
+                                    .map(|(x, y)| {
+                                        egui::pos2(
+                                            outline_x + (*x as f32 * self.zoom),
+                                            outline_y + (macro_def.size_y as f32 - *y as f32) * self.zoom,
+                                        )
+                                    })
+                                    .collect();
 
-                        // Compute the final polygons after boolean operations
-                        let additive_refs: Vec<&crate::lef::LefPolygon> =
-                            additive_polygons.iter().map(|&&p| p).collect();
-                        let subtractive_refs: Vec<&crate::lef::LefPolygon> =
-                            subtractive_polygons.iter().map(|&&p| p).collect();
-                        let final_polygons = self.compute_final_polygons(
-                            &additive_refs[..],
-                            &subtractive_refs[..],
-                            outline_x,
-                            outline_y,
-                        );
+                                if screen_points.len() >= 3 {
+                                    // Explicitly close the polygon by adding the first point at the end
+                                    let first_point = screen_points[0];
+                                    screen_points.push(first_point);
 
-                        // Render the final computed polygons as dashed outlines
-                        for screen_points in final_polygons {
-                            if screen_points.len() >= 3 {
-                                // Draw dashed outline for OBS polygons
-                                let stroke = egui::Stroke::new(1.0, color);
+                                    // Draw dashed outline for OBS polygons
+                                    let stroke = egui::Stroke::new(1.0, color);
 
-                                // Draw dashed lines between consecutive points
-                                for i in 0..screen_points.len() {
-                                    let start = screen_points[i];
-                                    let end = screen_points[(i + 1) % screen_points.len()];
+                                    // Draw dashed lines between consecutive points
+                                    for i in 0..(screen_points.len() - 1) {
+                                        let start = screen_points[i];
+                                        let end = screen_points[i + 1];
 
-                                    // Calculate line direction and length
-                                    let dx = end.x - start.x;
-                                    let dy = end.y - start.y;
-                                    let line_length = (dx * dx + dy * dy).sqrt();
+                                        // Calculate line direction and length
+                                        let dx = end.x - start.x;
+                                        let dy = end.y - start.y;
+                                        let line_length = (dx * dx + dy * dy).sqrt();
 
-                                    if line_length > 0.0 {
-                                        let dash_length = 3.0;
-                                        let gap_length = 2.0;
-                                        let pattern_length = dash_length + gap_length;
+                                        if line_length > 0.0 {
+                                            let dash_length = 3.0_f32;
+                                            let gap_length = 2.0_f32;
+                                            let pattern_length = dash_length + gap_length;
 
-                                        // Normalize direction
-                                        let dir_x = dx / line_length;
-                                        let dir_y = dy / line_length;
+                                            // Normalize direction
+                                            let dir_x = dx / line_length;
+                                            let dir_y = dy / line_length;
 
-                                        // Draw dashes along the line
-                                        let mut t = 0.0;
-                                        while t < line_length {
-                                            let dash_end = (t + dash_length).min(line_length);
-                                            let dash_start_pos = egui::pos2(
-                                                start.x + dir_x * t,
-                                                start.y + dir_y * t,
-                                            );
-                                            let dash_end_pos = egui::pos2(
-                                                start.x + dir_x * dash_end,
-                                                start.y + dir_y * dash_end,
-                                            );
+                                            // Draw dashes along the line
+                                            let mut t = 0.0;
+                                            while t < line_length {
+                                                let dash_end = (t + dash_length).min(line_length);
+                                                let dash_start_pos = egui::pos2(
+                                                    start.x + dir_x * t,
+                                                    start.y + dir_y * t,
+                                                );
+                                                let dash_end_pos = egui::pos2(
+                                                    start.x + dir_x * dash_end,
+                                                    start.y + dir_y * dash_end,
+                                                );
 
-                                            painter.line_segment(
-                                                [dash_start_pos, dash_end_pos],
-                                                stroke,
-                                            );
-                                            t += pattern_length;
+                                                painter.line_segment(
+                                                    [dash_start_pos, dash_end_pos],
+                                                    stroke,
+                                                );
+                                                t += pattern_length;
+                                            }
                                         }
                                     }
                                 }

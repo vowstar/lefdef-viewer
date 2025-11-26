@@ -67,6 +67,7 @@ pub struct LefRect {
 pub struct LefPolygon {
     pub layer: String,
     pub points: Vec<(f64, f64)>,
+    #[allow(dead_code)]
     pub is_hole: bool,
 }
 
