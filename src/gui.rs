@@ -1795,9 +1795,10 @@ impl LefDefViewer {
                 let macro_origin_x = center.x + self.pan_x;
                 let macro_origin_y = center.y + self.pan_y;
 
-                // For OUTLINE rendering, we place the rect at origin and apply ORIGIN offset
-                let outline_x = macro_origin_x + (macro_def.origin.0 as f32 * self.zoom);
-                let outline_y = macro_origin_y + (macro_def.origin.1 as f32 * self.zoom);
+                // OUTLINE box is positioned at macro_origin (SIZE defines the box)
+                // ORIGIN offset is applied to PIN/OBS coordinates, not to outline
+                let outline_x = macro_origin_x;
+                let outline_y = macro_origin_y;
                 let w = macro_def.size_x as f32 * self.zoom;
                 let h = macro_def.size_y as f32 * self.zoom;
 
@@ -1844,25 +1845,26 @@ impl LefDefViewer {
 
                             // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
                             // yl is bottom edge, yh is top edge in LEF coordinates
+                            // PIN coordinates are relative to ORIGIN, so add ORIGIN offset
                             let pin_rect = egui::Rect::from_min_max(
                                 egui::pos2(
-                                    outline_x + (rect_data.xl as f32 * self.zoom),
-                                    outline_y + (macro_def.size_y as f32 - rect_data.yh as f32) * self.zoom,
+                                    outline_x + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom),
+                                    outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh) as f32 * self.zoom),
                                 ),
                                 egui::pos2(
-                                    outline_x + (rect_data.xh as f32 * self.zoom),
-                                    outline_y + (macro_def.size_y as f32 - rect_data.yl as f32) * self.zoom,
+                                    outline_x + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom),
+                                    outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl) as f32 * self.zoom),
                                 ),
                             );
 
                             let color = self.get_layer_color(&detailed_layer);
                             painter.rect_filled(pin_rect, 0.0, color);
 
-                            // Update pin bounds for text positioning (with Y-flip)
-                            let rect_min_x = outline_x + (rect_data.xl as f32 * self.zoom);
-                            let rect_min_y = outline_y + (macro_def.size_y as f32 - rect_data.yh as f32) * self.zoom;
-                            let rect_max_x = outline_x + (rect_data.xh as f32 * self.zoom);
-                            let rect_max_y = outline_y + (macro_def.size_y as f32 - rect_data.yl as f32) * self.zoom;
+                            // Update pin bounds for text positioning (with Y-flip and ORIGIN offset)
+                            let rect_min_x = outline_x + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom);
+                            let rect_min_y = outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh) as f32 * self.zoom);
+                            let rect_max_x = outline_x + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom);
+                            let rect_max_y = outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl) as f32 * self.zoom);
 
                             if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
                                 pin_bounds = Some((
@@ -1908,13 +1910,14 @@ impl LefDefViewer {
                                 if polygon_data.points.len() >= 3 {
                                     // Convert LEF coordinates to screen coordinates
                                     // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
+                                    // PIN coordinates are relative to ORIGIN, so add ORIGIN offset
                                     let screen_points: Vec<egui::Pos2> = polygon_data
                                         .points
                                         .iter()
                                         .map(|(x, y)| {
                                             egui::pos2(
-                                                outline_x + (*x as f32 * self.zoom),
-                                                outline_y + (macro_def.size_y as f32 - *y as f32) * self.zoom,
+                                                outline_x + ((macro_def.origin.0 + *x) as f32 * self.zoom),
+                                                outline_y + ((macro_def.size_y - macro_def.origin.1 - *y) as f32 * self.zoom),
                                             )
                                         })
                                         .collect();
@@ -1992,14 +1995,15 @@ impl LefDefViewer {
                         }
 
                         // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
+                        // OBS coordinates are relative to ORIGIN, so add ORIGIN offset
                         let obs_rect = egui::Rect::from_min_max(
                             egui::pos2(
-                                outline_x + (rect_data.xl as f32 * self.zoom),
-                                outline_y + (macro_def.size_y as f32 - rect_data.yh as f32) * self.zoom,
+                                outline_x + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom),
+                                outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh) as f32 * self.zoom),
                             ),
                             egui::pos2(
-                                outline_x + (rect_data.xh as f32 * self.zoom),
-                                outline_y + (macro_def.size_y as f32 - rect_data.yl as f32) * self.zoom,
+                                outline_x + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom),
+                                outline_y + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl) as f32 * self.zoom),
                             ),
                         );
                         let color = self.get_layer_color(&detailed_layer);
@@ -2108,13 +2112,14 @@ impl LefDefViewer {
                             if polygon_data.points.len() >= 3 {
                                 // Convert LEF coordinates to screen coordinates
                                 // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
+                                // OBS coordinates are relative to ORIGIN, so add ORIGIN offset
                                 let mut screen_points: Vec<egui::Pos2> = polygon_data
                                     .points
                                     .iter()
                                     .map(|(x, y)| {
                                         egui::pos2(
-                                            outline_x + (*x as f32 * self.zoom),
-                                            outline_y + (macro_def.size_y as f32 - *y as f32) * self.zoom,
+                                            outline_x + ((macro_def.origin.0 + *x) as f32 * self.zoom),
+                                            outline_y + ((macro_def.size_y - macro_def.origin.1 - *y) as f32 * self.zoom),
                                         )
                                     })
                                     .collect();
