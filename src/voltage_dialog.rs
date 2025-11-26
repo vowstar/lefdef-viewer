@@ -500,6 +500,7 @@ impl VoltageDialog {
         voltage_config: &mut VoltageConfig,
         lef_data: Option<&Lef>,
         export_callback: &mut bool,
+        lef_files_count: usize,
     ) {
         if !self.visible {
             return;
@@ -529,8 +530,20 @@ impl VoltageDialog {
                 // Library name configuration
                 ui.horizontal(|ui| {
                     ui.label("Library Name:");
-                    ui.text_edit_singleline(&mut voltage_config.lib_name);
+                    if lef_files_count > 1 {
+                        ui.label(&voltage_config.lib_name).on_hover_text(
+                            format!("Note: {} LEF files will be exported.\nEach .lib file's library name will be auto-generated from its LEF filename.", lef_files_count)
+                        );
+                    } else {
+                        ui.text_edit_singleline(&mut voltage_config.lib_name);
+                    }
                 });
+                if lef_files_count > 1 {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(200, 200, 100),
+                        format!("Info: Exporting {} files - library names will match filenames", lef_files_count)
+                    );
+                }
                 ui.separator();
 
                 // Power pins configuration

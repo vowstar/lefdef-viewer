@@ -55,11 +55,16 @@ struct TextPositioning {
     angle: f32, // Rotation angle in radians
 }
 
-#[derive(Default)]
+/// Loaded LEF file with path information
+#[derive(Clone)]
+struct LoadedLefFile {
+    path: String,
+    data: Lef,
+}
+
 pub struct LefDefViewer {
-    lef_data: Option<Lef>,
+    lef_files: Vec<LoadedLefFile>,
     def_data: Option<Def>,
-    lef_file_path: Option<String>,
     def_file_path: Option<String>,
     show_lef_details: bool,
     show_def_details: bool,
@@ -99,9 +104,8 @@ pub struct LefDefViewer {
 impl LefDefViewer {
     pub fn new() -> Self {
         Self {
-            lef_data: None,
+            lef_files: Vec::new(),
             def_data: None,
-            lef_file_path: None,
             def_file_path: None,
             show_lef_details: false,
             show_def_details: false,
@@ -201,20 +205,19 @@ impl LefDefViewer {
 
     fn load_lef_file_sync(&mut self, lef: Lef, path: String) {
         // This is the synchronized version of LEF loading (after async completion)
-        // Update layer lists - collect all available layers with detailed type information
-        self.all_layers.clear();
-        self.visible_layers.clear();
+        // Add new LEF file to the collection (append mode, not replace)
 
-        // Add virtual layers
-        self.all_layers.insert("OUTLINE".to_string());
-        self.visible_layers.insert("OUTLINE".to_string());
-
-        // Add LABEL virtual layer for PIN text control
-        self.all_layers.insert("LABEL".to_string());
-        if self.show_pin_text {
-            self.visible_layers.insert("LABEL".to_string());
+        // If this is the first LEF file, ensure virtual layers are present
+        if self.lef_files.is_empty() {
+            self.all_layers.insert("OUTLINE".to_string());
+            self.visible_layers.insert("OUTLINE".to_string());
+            self.all_layers.insert("LABEL".to_string());
+            if self.show_pin_text {
+                self.visible_layers.insert("LABEL".to_string());
+            }
         }
 
+        // Collect layers from the new LEF file
         for macro_def in &lef.macros {
             for pin in &macro_def.pins {
                 for port in &pin.ports {
@@ -252,14 +255,16 @@ impl LefDefViewer {
             }
         }
 
-        self.lef_data = Some(lef);
-        self.lef_file_path = Some(path);
+        // Add the new LEF file to collection
+        self.lef_files.push(LoadedLefFile { path, data: lef });
 
-        // Initialize voltage configuration with smart defaults
-        let basename = self.get_lef_basename();
-        self.voltage_config.lib_name = basename;
-        if let Some(lef_data) = &self.lef_data {
-            VoltageDialog::initialize_config(lef_data, &mut self.voltage_config);
+        // Initialize voltage configuration with first LEF file's smart defaults
+        if self.lef_files.len() == 1 {
+            let basename = self.get_lef_basename();
+            self.voltage_config.lib_name = basename;
+            if let Some(first_lef) = self.lef_files.first() {
+                VoltageDialog::initialize_config(&first_lef.data, &mut self.voltage_config);
+            }
         }
 
         self.error_message = None;
@@ -518,8 +523,9 @@ impl LefDefViewer {
         let mut max_y = f32::NEG_INFINITY;
         let mut found_any = false;
 
-        if let Some(lef) = &self.lef_data {
-            for macro_def in &lef.macros {
+        // Iterate through all loaded LEF files
+        for lef_file in &self.lef_files {
+            for macro_def in &lef_file.data.macros {
                 if !self.selected_cells.is_empty() && !self.selected_cells.contains(&macro_def.name)
                 {
                     continue;
@@ -651,8 +657,9 @@ impl LefDefViewer {
         let mut found_any = false;
 
         // Only consider visible OUTLINE layers from selected macros
-        if let Some(lef) = &self.lef_data {
-            for macro_def in &lef.macros {
+        // Iterate through all loaded LEF files
+        for lef_file in &self.lef_files {
+            for macro_def in &lef_file.data.macros {
                 if !self.selected_cells.is_empty() && !self.selected_cells.contains(&macro_def.name)
                 {
                     continue;
@@ -850,14 +857,16 @@ impl LefDefViewer {
                     obs_layers.len()
                 );
 
-                self.lef_data = Some(lef);
-                self.lef_file_path = Some(path);
+                self.lef_files.push(LoadedLefFile {
+                    path: path.clone(),
+                    data: lef,
+                });
 
                 // Initialize voltage configuration with smart defaults
                 let basename = self.get_lef_basename();
                 self.voltage_config.lib_name = basename;
-                if let Some(lef_data) = &self.lef_data {
-                    VoltageDialog::initialize_config(lef_data, &mut self.voltage_config);
+                if let Some(lef_file) = self.lef_files.last() {
+                    VoltageDialog::initialize_config(&lef_file.data, &mut self.voltage_config);
                 }
                 self.error_message = None;
                 // Auto-show layers panel when LEF file is loaded successfully
@@ -923,8 +932,8 @@ impl LefDefViewer {
 
     /// Extract basename from LEF file path for use in export filenames
     fn get_lef_basename(&self) -> String {
-        if let Some(lef_path) = &self.lef_file_path {
-            if let Some(file_stem) = Path::new(lef_path).file_stem() {
+        if let Some(lef_file) = self.lef_files.first() {
+            if let Some(file_stem) = Path::new(&lef_file.path).file_stem() {
                 if let Some(basename) = file_stem.to_str() {
                     return basename.to_string();
                 }
@@ -934,41 +943,69 @@ impl LefDefViewer {
     }
 
     fn handle_export_lef_csv(&mut self) {
-        if let Some(lef_data) = &self.lef_data {
+        if !self.lef_files.is_empty() {
             let basename = self.get_lef_basename();
             let default_filename = format!("{basename}.csv");
-            if let Some(file_path) = FileDialog::new()
+            if let Some(first_file_path) = FileDialog::new()
                 .set_file_name(&default_filename)
                 .add_filter("CSV files", &["csv"])
                 .save_file()
             {
-                match export::export_lef_to_csv(lef_data, &file_path.to_string_lossy()) {
-                    Ok(()) => {
-                        self.success_message = Some(format!(
-                            "Successfully exported {} macros to CSV file: {}",
-                            lef_data.macros.len(),
-                            file_path.display()
-                        ));
+                let output_dir = first_file_path
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."));
+                let mut exported_files = Vec::new();
+                let mut had_error = false;
+
+                // Export each LEF file to a separate CSV file
+                for lef_file in &self.lef_files {
+                    // Generate output filename based on LEF file's original name
+                    let lef_basename = std::path::Path::new(&lef_file.path)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("output");
+                    let output_path = output_dir.join(format!("{}.csv", lef_basename));
+
+                    match export::export_lef_to_csv(&lef_file.data, &output_path.to_string_lossy())
+                    {
+                        Ok(()) => {
+                            exported_files.push(output_path.display().to_string());
+                        }
+                        Err(e) => {
+                            self.error_message =
+                                Some(format!("Failed to export {}: {}", lef_file.path, e));
+                            had_error = true;
+                            break;
+                        }
                     }
-                    Err(e) => {
-                        self.error_message = Some(format!("Failed to export CSV: {e}"));
-                    }
+                }
+
+                if !had_error {
+                    let total_macros: usize =
+                        self.lef_files.iter().map(|f| f.data.macros.len()).sum();
+                    self.success_message = Some(format!(
+                        "Successfully exported {} macros from {} LEF files:\n{}",
+                        total_macros,
+                        self.lef_files.len(),
+                        exported_files.join("\n")
+                    ));
                 }
             }
         }
     }
 
     fn handle_export_selected_cells_pinlist(&mut self) {
-        if let Some(lef_data) = &self.lef_data {
+        if !self.lef_files.is_empty() {
             if self.selected_cells.is_empty() {
                 self.error_message = Some("No cells selected for export".to_string());
                 return;
             }
 
-            // Get selected macros
-            let selected_macros: Vec<&crate::lef::LefMacro> = lef_data
-                .macros
+            // Get selected macros from all LEF files
+            let selected_macros: Vec<&crate::lef::LefMacro> = self
+                .lef_files
                 .iter()
+                .flat_map(|lef_file| lef_file.data.macros.iter())
                 .filter(|macro_def| self.selected_cells.contains(&macro_def.name))
                 .collect();
 
@@ -1027,35 +1064,65 @@ impl LefDefViewer {
     }
 
     fn handle_export_verilog_stub(&mut self) {
-        if let Some(lef_data) = &self.lef_data {
+        if !self.lef_files.is_empty() {
             let basename = self.get_lef_basename();
             let default_filename = format!("{basename}.v");
-            if let Some(file_path) = FileDialog::new()
+            if let Some(first_file_path) = FileDialog::new()
                 .set_file_name(&default_filename)
                 .add_filter("Verilog files", &["v"])
                 .save_file()
             {
-                match export::export_verilog_stub(lef_data, &file_path.to_string_lossy(), &basename)
-                {
-                    Ok(()) => {
-                        self.success_message = Some(format!(
-                            "Successfully exported {} cells to Verilog stub file: {}",
-                            lef_data.macros.len(),
-                            file_path.display()
-                        ));
+                let output_dir = first_file_path
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."));
+                let mut exported_files = Vec::new();
+                let mut had_error = false;
+
+                // Export each LEF file to a separate Verilog file
+                for lef_file in &self.lef_files {
+                    // Generate output filename based on LEF file's original name
+                    let lef_basename = std::path::Path::new(&lef_file.path)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("output");
+                    let output_path = output_dir.join(format!("{}.v", lef_basename));
+
+                    match export::export_verilog_stub(
+                        &lef_file.data,
+                        &output_path.to_string_lossy(),
+                        lef_basename,
+                    ) {
+                        Ok(()) => {
+                            exported_files.push(output_path.display().to_string());
+                        }
+                        Err(e) => {
+                            self.error_message =
+                                Some(format!("Failed to export {}: {}", lef_file.path, e));
+                            had_error = true;
+                            break;
+                        }
                     }
-                    Err(e) => {
-                        self.error_message = Some(format!("Failed to export Verilog stub: {e}"));
-                    }
+                }
+
+                if !had_error {
+                    let total_macros: usize =
+                        self.lef_files.iter().map(|f| f.data.macros.len()).sum();
+                    self.success_message = Some(format!(
+                        "Successfully exported {} cells from {} LEF files:\n{}",
+                        total_macros,
+                        self.lef_files.len(),
+                        exported_files.join("\n")
+                    ));
                 }
             }
         }
     }
 
     fn handle_export_lib_stub(&mut self) {
-        if let Some(_lef_data) = &self.lef_data {
+        if !self.lef_files.is_empty() {
             // Voltage config is already initialized when LEF file was loaded
-            // Just ensure lib_name is up to date and show dialog
+            // For single file: use its basename as lib_name
+            // For multiple files: lib_name will be auto-generated from each file's basename during export
             let basename = self.get_lef_basename();
             self.voltage_config.lib_name = basename;
             self.voltage_dialog.show();
@@ -1063,28 +1130,59 @@ impl LefDefViewer {
     }
 
     fn perform_lib_export(&mut self) {
-        if let Some(lef_data) = &self.lef_data {
+        if !self.lef_files.is_empty() {
             let default_filename = format!("{}.lib", self.voltage_config.lib_name);
-            if let Some(file_path) = FileDialog::new()
+            if let Some(first_file_path) = FileDialog::new()
                 .set_file_name(&default_filename)
                 .add_filter("Liberty files", &["lib"])
                 .save_file()
             {
-                match export::export_lib_stub_with_voltage_config(
-                    lef_data,
-                    &file_path.to_string_lossy(),
-                    &self.voltage_config,
-                ) {
-                    Ok(()) => {
-                        self.success_message = Some(format!(
-                            "Successfully exported {} cells to Liberty stub file: {}",
-                            lef_data.macros.len(),
-                            file_path.display()
-                        ));
+                let output_dir = first_file_path
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."));
+                let mut exported_files = Vec::new();
+                let mut had_error = false;
+
+                // Export each LEF file to a separate Liberty file
+                for lef_file in &self.lef_files {
+                    // Generate output filename based on LEF file's original name
+                    let lef_basename = std::path::Path::new(&lef_file.path)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("output");
+                    let output_path = output_dir.join(format!("{}.lib", lef_basename));
+
+                    // Create a dedicated VoltageConfig for this file
+                    // Use file's basename as lib_name, but inherit voltage settings from user config
+                    let mut file_voltage_config = self.voltage_config.clone();
+                    file_voltage_config.lib_name = lef_basename.to_string();
+
+                    match export::export_lib_stub_with_voltage_config(
+                        &lef_file.data,
+                        &output_path.to_string_lossy(),
+                        &file_voltage_config,
+                    ) {
+                        Ok(()) => {
+                            exported_files.push(output_path.display().to_string());
+                        }
+                        Err(e) => {
+                            self.error_message =
+                                Some(format!("Failed to export {}: {}", lef_file.path, e));
+                            had_error = true;
+                            break;
+                        }
                     }
-                    Err(e) => {
-                        self.error_message = Some(format!("Failed to export Liberty stub: {e}"));
-                    }
+                }
+
+                if !had_error {
+                    let total_macros: usize =
+                        self.lef_files.iter().map(|f| f.data.macros.len()).sum();
+                    self.success_message = Some(format!(
+                        "Successfully exported {} cells from {} LEF files:\n{}",
+                        total_macros,
+                        self.lef_files.len(),
+                        exported_files.join("\n")
+                    ));
                 }
             }
         }
@@ -1117,7 +1215,7 @@ impl LefDefViewer {
 
                 if ui
                     .add_enabled(
-                        self.lef_data.is_some(),
+                        !self.lef_files.is_empty(),
                         egui::Button::new("Export LEF to CSV"),
                     )
                     .clicked()
@@ -1128,7 +1226,7 @@ impl LefDefViewer {
 
                 if ui
                     .add_enabled(
-                        self.lef_data.is_some() && !self.selected_cells.is_empty(),
+                        !self.lef_files.is_empty() && !self.selected_cells.is_empty(),
                         egui::Button::new("Export Selected Cells Pinlist"),
                     )
                     .clicked()
@@ -1139,7 +1237,7 @@ impl LefDefViewer {
 
                 if ui
                     .add_enabled(
-                        self.lef_data.is_some(),
+                        !self.lef_files.is_empty(),
                         egui::Button::new("Export Verilog Stub"),
                     )
                     .clicked()
@@ -1150,7 +1248,7 @@ impl LefDefViewer {
 
                 if ui
                     .add_enabled(
-                        self.lef_data.is_some(),
+                        !self.lef_files.is_empty(),
                         egui::Button::new("Export Liberty Stub"),
                     )
                     .clicked()
@@ -1161,9 +1259,8 @@ impl LefDefViewer {
 
                 ui.separator();
 
-                if ui.button("Close LEF File").clicked() {
-                    self.lef_data = None;
-                    self.lef_file_path = None;
+                if ui.button("Close All LEF Files").clicked() {
+                    self.lef_files.clear();
                     self.selected_cells.clear();
                     self.all_layers.clear();
                     self.visible_layers.clear();
@@ -1206,10 +1303,80 @@ impl LefDefViewer {
         ui.vertical(|ui| {
             ui.heading("Files");
 
-            if let Some(path) = &self.lef_file_path {
-                ui.label(format!("LEF: {path}"));
-            } else {
+            if self.lef_files.is_empty() {
                 ui.label("No LEF file loaded");
+            } else {
+                ui.label(format!("LEF Files ({})", self.lef_files.len()));
+                let mut file_to_remove: Option<usize> = None;
+                egui::ScrollArea::vertical()
+                    .id_salt("lef_files_list_scroll")
+                    .max_height(200.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for (i, lef_file) in self.lef_files.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                if ui.small_button("X").on_hover_text("Remove this LEF file").clicked() {
+                                    file_to_remove = Some(i);
+                                }
+                                let file_name = std::path::Path::new(&lef_file.path)
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or(&lef_file.path);
+                                ui.label(file_name).on_hover_text(&lef_file.path);
+                            });
+                        }
+                    });
+
+                // Remove file after iteration completes
+                if let Some(idx) = file_to_remove {
+                    self.lef_files.remove(idx);
+                    // Recalculate layers after removing a file
+                    self.all_layers.clear();
+                    self.visible_layers.clear();
+
+                    // Rebuild layer lists from remaining files
+                    if !self.lef_files.is_empty() {
+                        self.all_layers.insert("OUTLINE".to_string());
+                        self.visible_layers.insert("OUTLINE".to_string());
+                        self.all_layers.insert("LABEL".to_string());
+                        if self.show_pin_text {
+                            self.visible_layers.insert("LABEL".to_string());
+                        }
+
+                        for lef_file in &self.lef_files {
+                            for macro_def in &lef_file.data.macros {
+                                for pin in &macro_def.pins {
+                                    for port in &pin.ports {
+                                        for rect in &port.rects {
+                                            let detailed_layer = format!("{}.PIN", rect.layer);
+                                            self.all_layers.insert(detailed_layer.clone());
+                                            if pin.use_type == "POWER" || pin.use_type == "GROUND" {
+                                                self.visible_layers.insert(detailed_layer);
+                                            }
+                                        }
+                                        for polygon in &port.polygons {
+                                            let detailed_layer = format!("{}.PIN", polygon.layer);
+                                            self.all_layers.insert(detailed_layer.clone());
+                                            if pin.use_type == "POWER" || pin.use_type == "GROUND" {
+                                                self.visible_layers.insert(detailed_layer);
+                                            }
+                                        }
+                                    }
+                                }
+                                for obs in &macro_def.obs {
+                                    for rect in &obs.rects {
+                                        let detailed_layer = format!("{}.OBS", rect.layer);
+                                        self.all_layers.insert(detailed_layer);
+                                    }
+                                    for polygon in &obs.polygons {
+                                        let detailed_layer = format!("{}.OBS", polygon.layer);
+                                        self.all_layers.insert(detailed_layer);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             if let Some(path) = &self.def_file_path {
@@ -1249,7 +1416,7 @@ impl LefDefViewer {
 
             ui.separator();
 
-            if let Some(lef) = &self.lef_data {
+            if !self.lef_files.is_empty() {
                 ui.heading("LEF Macros (Cells)");
                 ui.label("Select cells to display:");
 
@@ -1262,9 +1429,16 @@ impl LefDefViewer {
                     }
                 });
 
-                // Filter macros based on search text
-                let filtered_macros: Vec<&crate::lef::LefMacro> = lef.macros
+                // Collect and filter macros from all LEF files
+                let all_macros: Vec<&crate::lef::LefMacro> = self
+                    .lef_files
                     .iter()
+                    .flat_map(|lef_file| lef_file.data.macros.iter())
+                    .collect();
+
+                let filtered_macros: Vec<&crate::lef::LefMacro> = all_macros
+                    .iter()
+                    .copied()
                     .filter(|macro_def| {
                         if self.macro_filter.is_empty() {
                             true
@@ -1274,9 +1448,10 @@ impl LefDefViewer {
                     })
                     .collect();
 
-                ui.label(format!("Showing {} of {} macros", filtered_macros.len(), lef.macros.len()));
+                ui.label(format!("Showing {} of {} macros", filtered_macros.len(), all_macros.len()));
 
                 egui::ScrollArea::vertical()
+                    .id_salt("lef_macros_list_scroll")
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         for macro_def in filtered_macros {
@@ -1299,6 +1474,7 @@ impl LefDefViewer {
                                 // PINs section
                                 ui.collapsing(format!("PINS ({})", macro_def.pins.len()), |ui| {
                                     egui::ScrollArea::vertical()
+                                        .id_salt(format!("pins_scroll_{}", macro_def.name))
                                         .auto_shrink([false, true])
                                         .max_height(120.0)
                                         .show(ui, |ui| {
@@ -1363,6 +1539,7 @@ impl LefDefViewer {
                                 if total_obs_rects > 0 || total_obs_polys > 0 {
                                     ui.collapsing(format!("OBS Obstructions ({total_obs_rects} rects, {total_obs_polys} polys)"), |ui| {
                                         egui::ScrollArea::vertical()
+                                            .id_salt(format!("obs_scroll_{}", macro_def.name))
                                             .auto_shrink([false, true])
                                             .max_height(120.0)
                                             .show(ui, |ui| {
@@ -1447,8 +1624,10 @@ impl LefDefViewer {
 
                 ui.separator();
                 if ui.button("Select All Cells").clicked() {
-                    for macro_def in &lef.macros {
-                        self.selected_cells.insert(macro_def.name.clone());
+                    for lef_file in &self.lef_files {
+                        for macro_def in &lef_file.data.macros {
+                            self.selected_cells.insert(macro_def.name.clone());
+                        }
                     }
                 }
                 if ui.button("Clear Selection").clicked() {
@@ -1786,8 +1965,8 @@ impl LefDefViewer {
         let mut texts_to_render = Vec::new();
         let mut smart_texts_to_render = Vec::new();
 
-        if let Some(lef) = &self.lef_data {
-            for macro_def in &lef.macros {
+        for lef_file in &self.lef_files {
+            for macro_def in &lef_file.data.macros {
                 // Only render selected cells (or all if none selected)
                 if !self.selected_cells.is_empty() && !self.selected_cells.contains(&macro_def.name)
                 {
@@ -2459,7 +2638,7 @@ impl LefDefViewer {
         ui.vertical(|ui| {
             ui.heading("Layers");
 
-            if self.lef_data.is_some() {
+            if !self.lef_files.is_empty() {
                 ui.label("Toggle layer visibility:");
 
                 // Get all unique layers from the complete list, not just visible ones
@@ -2958,8 +3137,9 @@ impl eframe::App for LefDefViewer {
         self.voltage_dialog.render(
             ctx,
             &mut self.voltage_config,
-            self.lef_data.as_ref(),
+            self.lef_files.first().map(|f| &f.data),
             &mut export_requested,
+            self.lef_files.len(),
         );
         if export_requested {
             self.perform_lib_export();
@@ -3014,32 +3194,37 @@ impl eframe::App for LefDefViewer {
                 .resizable(true)
                 .default_size([400.0, 300.0])
                 .show(ctx, |ui| {
-                    if let Some(lef) = &self.lef_data {
+                    if self.lef_files.is_empty() {
+                        ui.label("No LEF data loaded");
+                    } else {
                         egui::ScrollArea::vertical()
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
-                                ui.label(format!("Total Macros: {}", lef.macros.len()));
+                                let total_macros: usize =
+                                    self.lef_files.iter().map(|f| f.data.macros.len()).sum();
+                                ui.label(format!("Total Macros: {}", total_macros));
                                 ui.separator();
-                                for macro_def in &lef.macros {
-                                    ui.collapsing(&macro_def.name, |ui| {
-                                        ui.monospace(format!("Class: {}", macro_def.class));
-                                        ui.monospace(format!("Source: {}", macro_def.foreign));
-                                        ui.monospace(format!("Site: {}", macro_def.site));
-                                        ui.monospace(format!(
-                                            "Origin: ({:.3}, {:.3})",
-                                            macro_def.origin.0, macro_def.origin.1
-                                        ));
-                                        ui.monospace(format!(
-                                            "Size: {:.3} x {:.3}",
-                                            macro_def.size_x, macro_def.size_y
-                                        ));
-                                        ui.monospace(format!("Foreign: {}", macro_def.foreign));
-                                        ui.monospace(format!("Pins: {}", macro_def.pins.len()));
-                                    });
+                                for (i, lef_file) in self.lef_files.iter().enumerate() {
+                                    ui.heading(format!("LEF File {}: {}", i + 1, lef_file.path));
+                                    for macro_def in &lef_file.data.macros {
+                                        ui.collapsing(&macro_def.name, |ui| {
+                                            ui.monospace(format!("Class: {}", macro_def.class));
+                                            ui.monospace(format!("Source: {}", macro_def.foreign));
+                                            ui.monospace(format!("Site: {}", macro_def.site));
+                                            ui.monospace(format!(
+                                                "Origin: ({:.3}, {:.3})",
+                                                macro_def.origin.0, macro_def.origin.1
+                                            ));
+                                            ui.monospace(format!(
+                                                "Size: {:.3} x {:.3}",
+                                                macro_def.size_x, macro_def.size_y
+                                            ));
+                                            ui.monospace(format!("Foreign: {}", macro_def.foreign));
+                                            ui.monospace(format!("Pins: {}", macro_def.pins.len()));
+                                        });
+                                    }
                                 }
                             });
-                    } else {
-                        ui.label("No LEF data loaded");
                     }
                 });
         }
