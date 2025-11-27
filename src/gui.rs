@@ -67,6 +67,9 @@ pub struct LefDefViewer {
     lef_files: Vec<LoadedLefFile>,
     def_data: Option<Def>,
     def_file_path: Option<String>,
+    def_mode: bool, // True when DEF is loaded and active
+    component_macro_map: std::collections::HashMap<String, String>, // Maps DEF component instance to LEF macro name
+    missing_cells: std::collections::HashSet<String>, // LEF cells referenced in DEF but not found in any loaded LEF
     show_lef_details: bool,
     show_def_details: bool,
     zoom: f32,
@@ -124,6 +127,9 @@ impl LefDefViewer {
             lef_files: Vec::new(),
             def_data: None,
             def_file_path: None,
+            def_mode: false,
+            component_macro_map: std::collections::HashMap::new(),
+            missing_cells: std::collections::HashSet::new(),
             show_lef_details: false,
             show_def_details: false,
             zoom: 1.0,
@@ -294,16 +300,199 @@ impl LefDefViewer {
         // Auto fit to view when LEF file is loaded successfully
         // Delay fit to view by a few frames to ensure UI layout is stable
         self.fit_to_view_delay_frames = 3;
+
+        // If in DEF mode, rebuild component-macro mapping to incorporate new LEF macros
+        if self.def_mode {
+            self.rebuild_component_macro_map();
+            println!("DEF Mode: Rebuilt component mapping after loading new LEF file");
+        }
     }
 
     fn load_def_file_sync(&mut self, def: Def, path: String) {
         // This is the synchronized version of DEF loading (after async completion)
         self.def_data = Some(def);
         self.def_file_path = Some(path);
+
+        // Enter DEF mode
+        self.def_mode = true;
+
+        // Build component-to-macro mapping
+        self.rebuild_component_macro_map();
+
         self.error_message = None;
         // Auto fit to view when DEF file is loaded successfully
         // Delay fit to view by a few frames to ensure UI layout is stable
         self.fit_to_view_delay_frames = 3;
+    }
+
+    /// Transform a point based on DEF orientation and placement
+    ///
+    /// DEF orientations:
+    /// - N: No rotation (0 degrees)
+    /// - S: 180 degree rotation
+    /// - E: 90 degree counterclockwise rotation
+    /// - W: 270 degree counterclockwise rotation (90 degree clockwise)
+    /// - FN, FS, FE, FW: Flipped versions (mirror about Y-axis first, then rotate)
+    ///
+    /// Transformation order:
+    /// 1. Apply orientation transformation (rotate/flip) around origin
+    /// 2. Translate to placement position
+    ///
+    /// Parameters:
+    /// - point: (x, y) coordinate in LEF macro space
+    /// - placement: (px, py) placement position from DEF
+    /// - orientation: Orientation string from DEF (N, S, E, W, FN, FS, FE, FW)
+    /// - macro_size: (width, height) of the LEF macro bounding box
+    fn transform_point(
+        &self,
+        point: (f64, f64),
+        placement: (f64, f64),
+        orientation: &str,
+        macro_size: (f64, f64),
+    ) -> (f64, f64) {
+        let (x, y) = point;
+        let (px, py) = placement;
+        let (width, height) = macro_size;
+
+        // Apply orientation transformation
+        let (tx, ty) = match orientation {
+            "N" => {
+                // No rotation, no flip
+                (x, y)
+            }
+            "S" => {
+                // 180 degree rotation around center
+                (width - x, height - y)
+            }
+            "E" => {
+                // 90 degree counterclockwise rotation
+                // (x, y) -> (-y, x) but adjusted for size
+                (y, width - x)
+            }
+            "W" => {
+                // 270 degree counterclockwise (90 degree clockwise)
+                // (x, y) -> (y, -x) but adjusted for size
+                (height - y, x)
+            }
+            "FN" => {
+                // Flip about Y-axis (mirror horizontally), no rotation
+                (width - x, y)
+            }
+            "FS" => {
+                // Flip about Y-axis, then 180 degree rotation
+                (x, height - y)
+            }
+            "FE" => {
+                // Flip about Y-axis, then 90 degree CCW rotation
+                (y, x)
+            }
+            "FW" => {
+                // Flip about Y-axis, then 270 degree CCW rotation
+                (height - y, width - x)
+            }
+            _ => {
+                println!(
+                    "WARNING: Unknown orientation '{}', treating as N",
+                    orientation
+                );
+                (x, y)
+            }
+        };
+
+        // Translate to placement position
+        (px + tx, py + ty)
+    }
+
+    /// Calculate bounding box of a macro after transformation
+    /// Returns (min_x, min_y, max_x, max_y) in world coordinates
+    fn transform_bbox(
+        &self,
+        macro_size: (f64, f64),
+        placement: (f64, f64),
+        orientation: &str,
+    ) -> (f64, f64, f64, f64) {
+        let (width, height) = macro_size;
+
+        // Transform all four corners
+        let corners = vec![
+            (0.0, 0.0),      // Bottom-left
+            (width, 0.0),    // Bottom-right
+            (width, height), // Top-right
+            (0.0, height),   // Top-left
+        ];
+
+        let transformed: Vec<(f64, f64)> = corners
+            .iter()
+            .map(|&corner| self.transform_point(corner, placement, orientation, macro_size))
+            .collect();
+
+        // Find bounding box of transformed corners
+        let min_x = transformed
+            .iter()
+            .map(|p| p.0)
+            .fold(f64::INFINITY, f64::min);
+        let min_y = transformed
+            .iter()
+            .map(|p| p.1)
+            .fold(f64::INFINITY, f64::min);
+        let max_x = transformed
+            .iter()
+            .map(|p| p.0)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let max_y = transformed
+            .iter()
+            .map(|p| p.1)
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        (min_x, min_y, max_x, max_y)
+    }
+
+    /// Build mapping from DEF component instances to LEF macro names
+    /// Also identifies missing cells (referenced in DEF but not in any loaded LEF)
+    fn rebuild_component_macro_map(&mut self) {
+        self.component_macro_map.clear();
+        self.missing_cells.clear();
+
+        if let Some(ref def) = self.def_data {
+            // Create a set of all available LEF macros for quick lookup
+            let mut available_macros: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+
+            for lef_file in &self.lef_files {
+                for macro_def in &lef_file.data.macros {
+                    available_macros.insert(macro_def.name.clone());
+                }
+            }
+
+            // Map each component to its macro and track missing cells
+            for component in &def.components {
+                let macro_name = component.macro_name.clone();
+
+                // Map component instance to its macro name
+                self.component_macro_map
+                    .insert(component.name.clone(), macro_name.clone());
+
+                // Track if this macro is missing from LEF files
+                if !available_macros.contains(&macro_name) {
+                    self.missing_cells.insert(macro_name);
+                }
+            }
+
+            // Log statistics
+            let total_components = def.components.len();
+            let missing_count = self.missing_cells.len();
+            let matched_count = total_components.saturating_sub(
+                def.components
+                    .iter()
+                    .filter(|c| self.missing_cells.contains(&c.macro_name))
+                    .count(),
+            );
+
+            println!(
+                "DEF Mode: {} components total, {} matched, {} unique missing cells",
+                total_components, matched_count, missing_count
+            );
+        }
     }
 
     fn render_text_with_outline(
@@ -1330,6 +1519,9 @@ impl LefDefViewer {
                 if ui.button("Close DEF File").clicked() {
                     self.def_data = None;
                     self.def_file_path = None;
+                    self.def_mode = false;
+                    self.component_macro_map.clear();
+                    self.missing_cells.clear();
                     ui.close_menu();
                 }
 
@@ -1436,11 +1628,63 @@ impl LefDefViewer {
                             }
                         }
                     }
+
+                    // If in DEF mode, rebuild component mapping after removing LEF
+                    if self.def_mode {
+                        self.rebuild_component_macro_map();
+                    }
                 }
             }
 
+            ui.separator();
+
+            // DEF file information and mode indicator
             if let Some(path) = &self.def_file_path {
-                ui.label(format!("DEF: {path}"));
+                let file_name = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path);
+                ui.label(format!("DEF: {}", file_name)).on_hover_text(path);
+
+                // Show DEF mode statistics
+                if self.def_mode {
+                    if let Some(ref def) = self.def_data {
+                        let total_components = def.components.len();
+                        let missing_unique = self.missing_cells.len();
+
+                        // Count how many component instances use missing cells
+                        let missing_instances = def.components.iter()
+                            .filter(|c| self.missing_cells.contains(&c.macro_name))
+                            .count();
+                        let matched_instances = total_components.saturating_sub(missing_instances);
+
+                        ui.colored_label(
+                            egui::Color32::from_rgb(100, 200, 100),
+                            format!("DEF Mode Active")
+                        );
+                        ui.label(format!("Components: {}", total_components));
+                        ui.label(format!("Matched: {}", matched_instances));
+
+                        if missing_unique > 0 {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(200, 100, 100),
+                                format!("Missing: {} instances ({} unique cells)", missing_instances, missing_unique)
+                            );
+
+                            // Show missing cells in collapsible section
+                            ui.collapsing("Missing Cells", |ui| {
+                                egui::ScrollArea::vertical()
+                                    .id_salt("missing_cells_scroll")
+                                    .max_height(150.0)
+                                    .show(ui, |ui| {
+                                        for cell in &self.missing_cells {
+                                            ui.label(format!("- {}", cell));
+                                        }
+                                    });
+                            });
+                        }
+                    }
+                }
             } else {
                 ui.label("No DEF file loaded");
             }
