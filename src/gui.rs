@@ -35,6 +35,8 @@ enum LoadingState {
 enum LoadingMessage {
     LefLoaded(Result<(Lef, String), String>, String), // Result(Lef + hash), file path
     DefLoaded(Box<Result<Def, String>>, String),      // Result and file path
+    LefFileSelected(Option<String>),                  // File path from dialog (None if cancelled)
+    DefFileSelected(Option<String>),                  // File path from dialog (None if cancelled)
 }
 
 /// Edge proximity detection result
@@ -194,7 +196,9 @@ impl LefDefViewer {
         }
 
         // Check for loading completion messages
+        // Request repaint while we have a receiver to ensure timely message processing
         if let Some(receiver) = &self.loading_receiver {
+            ctx.request_repaint();
             match receiver.try_recv() {
                 Ok(message) => {
                     self.loading_state = LoadingState::Idle;
@@ -217,6 +221,16 @@ impl LefDefViewer {
                                 self.error_message = Some(error);
                             }
                         },
+                        LoadingMessage::LefFileSelected(path_opt) => {
+                            if let Some(path) = path_opt {
+                                self.start_lef_file_loading(path);
+                            }
+                        }
+                        LoadingMessage::DefFileSelected(path_opt) => {
+                            if let Some(path) = path_opt {
+                                self.start_def_file_loading(path);
+                            }
+                        }
                     }
                     ctx.request_repaint();
                 }
@@ -1361,6 +1375,40 @@ impl LefDefViewer {
         }
     }
 
+    /// Open LEF file dialog in background thread to avoid UI freeze
+    fn open_lef_file_dialog(&mut self) {
+        // Create channel for communication
+        let (tx, rx) = mpsc::channel();
+        self.loading_receiver = Some(rx);
+
+        // Open file dialog in background thread
+        thread::spawn(move || {
+            let result = FileDialog::new()
+                .add_filter("LEF files", &["lef"])
+                .pick_file()
+                .map(|path| path.to_string_lossy().to_string());
+
+            let _ = tx.send(LoadingMessage::LefFileSelected(result));
+        });
+    }
+
+    /// Open DEF file dialog in background thread to avoid UI freeze
+    fn open_def_file_dialog(&mut self) {
+        // Create channel for communication
+        let (tx, rx) = mpsc::channel();
+        self.loading_receiver = Some(rx);
+
+        // Open file dialog in background thread
+        thread::spawn(move || {
+            let result = FileDialog::new()
+                .add_filter("DEF files", &["def"])
+                .pick_file()
+                .map(|path| path.to_string_lossy().to_string());
+
+            let _ = tx.send(LoadingMessage::DefFileSelected(result));
+        });
+    }
+
     fn start_lef_file_loading(&mut self, path: String) {
         // Calculate file hash for deduplication
         let file_hash = match Self::calculate_file_hash(&path) {
@@ -1859,22 +1907,12 @@ impl LefDefViewer {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("Open LEF File").clicked() {
-                    if let Some(path) = FileDialog::new()
-                        .add_filter("LEF files", &["lef"])
-                        .pick_file()
-                    {
-                        self.start_lef_file_loading(path.to_string_lossy().to_string());
-                    }
+                    self.open_lef_file_dialog();
                     ui.close_menu();
                 }
 
                 if ui.button("Open DEF File").clicked() {
-                    if let Some(path) = FileDialog::new()
-                        .add_filter("DEF files", &["def"])
-                        .pick_file()
-                    {
-                        self.start_def_file_loading(path.to_string_lossy().to_string());
-                    }
+                    self.open_def_file_dialog();
                     ui.close_menu();
                 }
 
