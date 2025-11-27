@@ -197,53 +197,149 @@ impl LefDefViewer {
 
         // Check for loading completion messages
         // Request repaint while we have a receiver to ensure timely message processing
-        if let Some(receiver) = &self.loading_receiver {
+        if self.loading_receiver.is_some() {
             ctx.request_repaint();
-            match receiver.try_recv() {
-                Ok(message) => {
-                    self.loading_state = LoadingState::Idle;
-                    self.loading_receiver = None;
 
-                    match message {
-                        LoadingMessage::LefLoaded(result, path) => match result {
-                            Ok((lef, hash)) => {
-                                self.load_lef_file_sync(lef, path, hash);
+            // Take ownership of receiver to avoid borrow conflicts
+            let receiver = self.loading_receiver.take().unwrap();
+
+            // Process all available messages in this frame
+            let mut keep_receiver = true;
+            loop {
+                match receiver.try_recv() {
+                    Ok(message) => {
+                        match message {
+                            LoadingMessage::LefLoaded(result, path) => {
+                                log::info!("Received LefLoaded message for: {}", path);
+                                match result {
+                                    Ok((lef, hash)) => {
+                                        self.load_lef_file_sync(lef, path, hash);
+                                    }
+                                    Err(error) => {
+                                        self.error_message = Some(error);
+                                    }
+                                }
                             }
-                            Err(error) => {
-                                self.error_message = Some(error);
+                            LoadingMessage::DefLoaded(result, path) => {
+                                match *result {
+                                    Ok(def) => {
+                                        self.load_def_file_sync(def, path);
+                                    }
+                                    Err(error) => {
+                                        self.error_message = Some(error);
+                                    }
+                                }
+                                // DEF loading is single file, so we can clear receiver
+                                self.loading_state = LoadingState::Idle;
+                                keep_receiver = false;
                             }
-                        },
-                        LoadingMessage::DefLoaded(result, path) => match *result {
-                            Ok(def) => {
-                                self.load_def_file_sync(def, path);
+                            LoadingMessage::LefFilesSelected(paths) => {
+                                log::info!("Received LefFilesSelected with {} paths", paths.len());
+                                if paths.is_empty() {
+                                    // User cancelled the dialog
+                                    self.loading_state = LoadingState::Idle;
+                                    keep_receiver = false;
+                                    break;
+                                }
+
+                                // Create a single channel for all files
+                                let (tx, rx) = mpsc::channel();
+
+                                // Set loading state
+                                if let Some(first_path) = paths.first() {
+                                    let file_name = Path::new(first_path)
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    let display_name = if paths.len() > 1 {
+                                        format!("{} (+{} more)", file_name, paths.len() - 1)
+                                    } else {
+                                        file_name
+                                    };
+                                    self.loading_state = LoadingState::Loading {
+                                        file_type: "LEF".to_string(),
+                                        file_name: display_name,
+                                        start_time: Instant::now(),
+                                        show_progress: false,
+                                    };
+                                }
+
+                                // Spawn loading thread for each file
+                                for path in paths {
+                                    // Calculate file hash for deduplication
+                                    let file_hash = match Self::calculate_file_hash(&path) {
+                                        Ok(hash) => hash,
+                                        Err(e) => {
+                                            self.error_message = Some(format!(
+                                                "Failed to read file {}: {}",
+                                                path, e
+                                            ));
+                                            continue;
+                                        }
+                                    };
+
+                                    // Check if this file is already loaded (by content hash)
+                                    let mut already_loaded = false;
+                                    for loaded_file in &self.lef_files {
+                                        if loaded_file.file_hash == file_hash {
+                                            already_loaded = true;
+                                            log::info!("Skipping already loaded file: {}", path);
+                                            break;
+                                        }
+                                    }
+
+                                    if already_loaded {
+                                        continue;
+                                    }
+
+                                    // Start loading in background thread
+                                    let tx_clone = tx.clone();
+                                    let hash_clone = file_hash.clone();
+                                    log::info!("Starting loading thread for: {}", path);
+                                    thread::spawn(move || {
+                                        let reader = LefReader::new();
+                                        let result = match reader.read(&path) {
+                                            Ok(lef) => Ok((lef, hash_clone)),
+                                            Err(e) => Err(format!("Failed to load LEF file: {e}")),
+                                        };
+                                        let _ = tx_clone
+                                            .send(LoadingMessage::LefLoaded(result, path.clone()));
+                                    });
+                                }
+
+                                // Replace receiver with new one for loading threads
+                                self.loading_receiver = Some(rx);
+                                keep_receiver = false; // Don't restore old receiver
+                                break; // Exit loop, new receiver will be used in next frame
                             }
-                            Err(error) => {
-                                self.error_message = Some(error);
-                            }
-                        },
-                        LoadingMessage::LefFilesSelected(paths) => {
-                            for path in paths {
-                                self.start_lef_file_loading(path);
+                            LoadingMessage::DefFileSelected(path_opt) => {
+                                if let Some(path) = path_opt {
+                                    self.start_def_file_loading(path);
+                                }
+                                self.loading_state = LoadingState::Idle;
+                                keep_receiver = false;
                             }
                         }
-                        LoadingMessage::DefFileSelected(path_opt) => {
-                            if let Some(path) = path_opt {
-                                self.start_def_file_loading(path);
-                            }
-                        }
+                        // Continue processing more messages
                     }
-                    ctx.request_repaint();
+                    Err(mpsc::TryRecvError::Empty) => {
+                        // No more messages available, exit loop and restore receiver
+                        break;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        // Channel disconnected, all senders dropped, all files loaded
+                        log::info!("All file loading threads completed");
+                        self.loading_state = LoadingState::Idle;
+                        keep_receiver = false;
+                        break;
+                    }
                 }
-                Err(mpsc::TryRecvError::Empty) => {
-                    // No message yet, keep waiting
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    // Channel disconnected, reset state
-                    self.loading_state = LoadingState::Idle;
-                    self.loading_receiver = None;
-                    self.error_message = Some("File loading was interrupted".to_string());
-                    ctx.request_repaint();
-                }
+            }
+
+            // Restore receiver if we should keep it
+            if keep_receiver {
+                self.loading_receiver = Some(receiver);
             }
         }
     }
@@ -251,6 +347,8 @@ impl LefDefViewer {
     fn load_lef_file_sync(&mut self, lef: Lef, path: String, file_hash: String) {
         // This is the synchronized version of LEF loading (after async completion)
         // Add new LEF file to the collection (append mode, not replace)
+        log::info!("Loading LEF file into GUI: {}", path);
+        log::info!("Current LEF count: {}", self.lef_files.len());
 
         // If this is the first LEF file, ensure virtual layers are present
         if self.lef_files.is_empty() {
@@ -302,10 +400,15 @@ impl LefDefViewer {
 
         // Add the new LEF file to collection
         self.lef_files.push(LoadedLefFile {
-            path,
+            path: path.clone(),
             data: lef,
             file_hash,
         });
+        log::info!(
+            "Successfully loaded LEF file: {}, total LEF files: {}",
+            path,
+            self.lef_files.len()
+        );
 
         // Initialize voltage configuration with first LEF file's smart defaults
         if self.lef_files.len() == 1 {
@@ -1415,6 +1518,7 @@ impl LefDefViewer {
         });
     }
 
+    #[allow(dead_code)]
     fn start_lef_file_loading(&mut self, path: String) {
         // Calculate file hash for deduplication
         let file_hash = match Self::calculate_file_hash(&path) {
