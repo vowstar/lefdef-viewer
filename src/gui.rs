@@ -508,7 +508,7 @@ impl LefDefViewer {
         &self,
         painter: &egui::Painter,
         center: egui::Pos2,
-        _texts_to_render: &mut Vec<(egui::Pos2, String, egui::FontId, egui::Color32)>,
+        texts_to_render: &mut Vec<(egui::Pos2, String, egui::FontId, egui::Color32)>,
         _smart_texts_to_render: &mut Vec<(TextPositioning, String, egui::FontId, egui::Color32)>,
     ) {
         let def = match &self.def_data {
@@ -520,6 +520,17 @@ impl LefDefViewer {
         // Convert to LEF units by dividing by 1000
         let db_units = 1000.0;
 
+        // Calculate die area bounds for Y-axis flip
+        // DEF uses bottom-up coordinate system (Y=0 at bottom), screen uses top-down (Y=0 at top)
+        let die_area_max_y = if !def.die_area_points.is_empty() {
+            def.die_area_points
+                .iter()
+                .map(|p| p.1 / db_units)
+                .fold(f64::NEG_INFINITY, f64::max)
+        } else {
+            0.0
+        };
+
         // Calculate blink effect (1 Hz = 1 second period)
         let elapsed = self.start_time.elapsed().as_secs_f32();
         let blink_on = (elapsed % 1.0) < 0.5; // On for 0.5s, off for 0.5s
@@ -530,7 +541,13 @@ impl LefDefViewer {
             if self.missing_cells.contains(&component.macro_name) {
                 // Render placeholder for missing cell with blink effect
                 self.render_missing_cell_placeholder(
-                    painter, center, component, db_units, blink_on,
+                    painter,
+                    center,
+                    component,
+                    db_units,
+                    blink_on,
+                    texts_to_render,
+                    die_area_max_y,
                 );
                 continue;
             }
@@ -570,11 +587,13 @@ impl LefDefViewer {
                 let (min_x, min_y, max_x, max_y) =
                     self.transform_bbox(macro_size, (px, py), orientation);
 
-                // Convert to screen coordinates
+                // Convert to screen coordinates with Y-axis flip
                 let screen_min_x = center.x + self.pan_x + (min_x as f32 * self.zoom);
-                let screen_min_y = center.y + self.pan_y + (min_y as f32 * self.zoom);
+                let screen_min_y =
+                    center.y + self.pan_y + ((die_area_max_y as f32 - max_y as f32) * self.zoom);
                 let screen_max_x = center.x + self.pan_x + (max_x as f32 * self.zoom);
-                let screen_max_y = center.y + self.pan_y + (max_y as f32 * self.zoom);
+                let screen_max_y =
+                    center.y + self.pan_y + ((die_area_max_y as f32 - min_y as f32) * self.zoom);
 
                 let component_rect = egui::Rect::from_min_max(
                     egui::pos2(screen_min_x, screen_min_y),
@@ -599,19 +618,19 @@ impl LefDefViewer {
                     macro_size,
                 );
 
-                // Convert to screen coordinates
+                // Convert to screen coordinates with Y-axis flip
                 let screen_cx = center.x + self.pan_x + (transformed_cx as f32 * self.zoom);
-                let screen_cy = center.y + self.pan_y + (transformed_cy as f32 * self.zoom);
+                let screen_cy = center.y
+                    + self.pan_y
+                    + ((die_area_max_y as f32 - transformed_cy as f32) * self.zoom);
 
-                // Render text with white text and black outline, no rotation
-                self.render_text_with_outline(
-                    painter,
+                // Collect text for later rendering (so it appears on top of all shapes)
+                texts_to_render.push((
                     egui::pos2(screen_cx, screen_cy),
-                    egui::Align2::CENTER_CENTER,
-                    &component.name,
+                    component.name.clone(),
                     egui::FontId::proportional(12.0),
                     egui::Color32::WHITE,
-                );
+                ));
             }
 
             // Render LEF cell internal details (PINs, OBS) if enabled
@@ -657,7 +676,9 @@ impl LefDefViewer {
                                     );
                                     egui::pos2(
                                         center.x + self.pan_x + (tx as f32 * self.zoom),
-                                        center.y + self.pan_y + (ty as f32 * self.zoom),
+                                        center.y
+                                            + self.pan_y
+                                            + ((die_area_max_y as f32 - ty as f32) * self.zoom),
                                     )
                                 })
                                 .collect();
@@ -687,7 +708,9 @@ impl LefDefViewer {
                                         );
                                         egui::pos2(
                                             center.x + self.pan_x + (tx as f32 * self.zoom),
-                                            center.y + self.pan_y + (ty as f32 * self.zoom),
+                                            center.y
+                                                + self.pan_y
+                                                + ((die_area_max_y as f32 - ty as f32) * self.zoom),
                                         )
                                     })
                                     .collect();
@@ -738,7 +761,9 @@ impl LefDefViewer {
                                     self.transform_point(corner, (px, py), orientation, macro_size);
                                 egui::pos2(
                                     center.x + self.pan_x + (tx as f32 * self.zoom),
-                                    center.y + self.pan_y + (ty as f32 * self.zoom),
+                                    center.y
+                                        + self.pan_y
+                                        + ((die_area_max_y as f32 - ty as f32) * self.zoom),
                                 )
                             })
                             .collect();
@@ -771,7 +796,9 @@ impl LefDefViewer {
                                     );
                                     egui::pos2(
                                         center.x + self.pan_x + (tx as f32 * self.zoom),
-                                        center.y + self.pan_y + (ty as f32 * self.zoom),
+                                        center.y
+                                            + self.pan_y
+                                            + ((die_area_max_y as f32 - ty as f32) * self.zoom),
                                     )
                                 })
                                 .collect();
@@ -792,6 +819,7 @@ impl LefDefViewer {
     }
 
     /// Render placeholder for missing LEF cells (not found in loaded LEF files)
+    #[allow(clippy::too_many_arguments)]
     fn render_missing_cell_placeholder(
         &self,
         painter: &egui::Painter,
@@ -799,6 +827,8 @@ impl LefDefViewer {
         component: &crate::def::DefComponent,
         db_units: f64,
         blink_on: bool,
+        texts_to_render: &mut Vec<(egui::Pos2, String, egui::FontId, egui::Color32)>,
+        die_area_max_y: f64,
     ) {
         // Get component placement
         let (px, py, orientation) = if let Some(ref placement) = component.placement {
@@ -816,17 +846,19 @@ impl LefDefViewer {
         // Transform bounding box corners for the placeholder
         let (min_x, min_y, max_x, max_y) = self.transform_bbox(macro_size, (px, py), orientation);
 
-        // Convert to screen coordinates
+        // Convert to screen coordinates with Y-axis flip
         let screen_min_x = center.x + self.pan_x + (min_x as f32 * self.zoom);
-        let screen_min_y = center.y + self.pan_y + (min_y as f32 * self.zoom);
+        let screen_min_y =
+            center.y + self.pan_y + ((die_area_max_y as f32 - max_y as f32) * self.zoom);
         let screen_max_x = center.x + self.pan_x + (max_x as f32 * self.zoom);
-        let screen_max_y = center.y + self.pan_y + (max_y as f32 * self.zoom);
+        let screen_max_y =
+            center.y + self.pan_y + ((die_area_max_y as f32 - min_y as f32) * self.zoom);
 
-        // Blink color: red when on, transparent when off
+        // Blink color: bright red when on, very dark when off (high contrast)
         let outline_color = if blink_on {
-            egui::Color32::from_rgb(255, 0, 0) // Red
+            egui::Color32::from_rgb(255, 50, 50) // Bright red
         } else {
-            egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100) // Semi-transparent red
+            egui::Color32::from_rgba_unmultiplied(50, 0, 0, 30) // Almost invisible dark red
         };
 
         // Draw dashed rectangle outline
@@ -859,30 +891,26 @@ impl LefDefViewer {
             egui::Stroke::new(2.0, outline_color),
         );
 
-        // Display component name and macro name (no rotation, white text with black outline)
+        // Collect text for later rendering (so it appears on top of all shapes)
         let center_x = (screen_min_x + screen_max_x) / 2.0;
         let center_y = (screen_min_y + screen_max_y) / 2.0;
 
         // Component name above center
-        self.render_text_with_outline(
-            painter,
+        texts_to_render.push((
             egui::pos2(center_x, center_y - 10.0),
-            egui::Align2::CENTER_CENTER,
-            &component.name,
+            component.name.clone(),
             egui::FontId::proportional(10.0),
             egui::Color32::WHITE,
-        );
+        ));
 
         // Macro name (missing) below center
         let text2 = format!("({})", component.macro_name);
-        self.render_text_with_outline(
-            painter,
+        texts_to_render.push((
             egui::pos2(center_x, center_y + 10.0),
-            egui::Align2::CENTER_CENTER,
-            &text2,
+            text2,
             egui::FontId::proportional(8.0),
             egui::Color32::WHITE,
-        );
+        ));
     }
 
     fn render_text_with_outline(
