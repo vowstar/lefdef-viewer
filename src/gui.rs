@@ -1009,25 +1009,28 @@ impl LefDefViewer {
         );
 
         // Collect text for later rendering (so it appears on top of all shapes)
-        let center_x = (screen_min_x + screen_max_x) / 2.0;
-        let center_y = (screen_min_y + screen_max_y) / 2.0;
+        // Only show text if show_component_text is enabled
+        if self.show_component_text {
+            let center_x = (screen_min_x + screen_max_x) / 2.0;
+            let center_y = (screen_min_y + screen_max_y) / 2.0;
 
-        // Component name above center
-        texts_to_render.push((
-            egui::pos2(center_x, center_y - 10.0),
-            component.name.clone(),
-            egui::FontId::proportional(10.0),
-            egui::Color32::WHITE,
-        ));
+            // Component name above center
+            texts_to_render.push((
+                egui::pos2(center_x, center_y - 10.0),
+                component.name.clone(),
+                egui::FontId::proportional(10.0),
+                egui::Color32::WHITE,
+            ));
 
-        // Macro name (missing) below center
-        let text2 = format!("({})", component.macro_name);
-        texts_to_render.push((
-            egui::pos2(center_x, center_y + 10.0),
-            text2,
-            egui::FontId::proportional(8.0),
-            egui::Color32::WHITE,
-        ));
+            // Macro name (missing) below center
+            let text2 = format!("({})", component.macro_name);
+            texts_to_render.push((
+                egui::pos2(center_x, center_y + 10.0),
+                text2,
+                egui::FontId::proportional(8.0),
+                egui::Color32::WHITE,
+            ));
+        }
     }
 
     fn render_text_with_outline(
