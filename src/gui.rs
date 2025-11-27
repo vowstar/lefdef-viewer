@@ -82,6 +82,8 @@ pub struct LefDefViewer {
     all_layers: std::collections::HashSet<String>,
     show_layers_panel: bool,
     show_pin_text: bool,
+    show_component_text: bool, // Show component instance names in DEF mode
+    show_cell_details: bool,   // Show LEF cell internal details (PINs, OBS) in DEF mode
     fit_to_view_requested: bool,
     fit_to_view_delay_frames: u8, // Delay fit to view by a few frames for UI stability
     // LEF related selection states
@@ -147,6 +149,8 @@ impl LefDefViewer {
             all_layers: std::collections::HashSet::new(),
             show_layers_panel: true,
             show_pin_text: true,
+            show_component_text: true,
+            show_cell_details: true, // Default: enabled
             fit_to_view_requested: false,
             fit_to_view_delay_frames: 0,
             // LEF related selection states
@@ -574,8 +578,195 @@ impl LefDefViewer {
                 );
             }
 
-            // TODO: Transform and render PINs and OBS
-            // This will be implemented in next step
+            // Render component name if enabled
+            if self.show_component_text {
+                // Transform center point to world coordinates with orientation
+                let (transformed_cx, transformed_cy) =
+                    self.transform_point((macro_size.0 / 2.0, macro_size.1 / 2.0), (px, py), orientation, macro_size);
+
+                // Convert to screen coordinates
+                let screen_cx = center.x + self.pan_x + (transformed_cx as f32 * self.zoom);
+                let screen_cy = center.y + self.pan_y + (transformed_cy as f32 * self.zoom);
+
+                // Calculate rotation angle based on orientation (in radians)
+                let angle_rad = match orientation {
+                    "N" => 0.0,
+                    "S" => std::f32::consts::PI,          // 180 degrees
+                    "E" => std::f32::consts::PI / 2.0,     // 90 degrees CCW
+                    "W" => -std::f32::consts::PI / 2.0,    // 90 degrees CW
+                    "FN" => 0.0,                           // Flipped, no rotation
+                    "FS" => std::f32::consts::PI,          // Flipped + 180
+                    "FE" => std::f32::consts::PI / 2.0,    // Flipped + 90 CCW
+                    "FW" => -std::f32::consts::PI / 2.0,   // Flipped + 90 CW
+                    _ => 0.0,
+                };
+
+                // Create text shape with rotation using the same approach as pin text
+                let text_pos = egui::pos2(screen_cx, screen_cy);
+                let font_id = egui::FontId::proportional(12.0);
+                let mut text_shape = egui::Shape::text(
+                    &painter.fonts(|f| f.clone()),
+                    text_pos,
+                    egui::Align2::CENTER_CENTER,
+                    &component.name,
+                    font_id,
+                    egui::Color32::YELLOW,
+                );
+
+                // Apply rotation to text shape
+                if angle_rad != 0.0 {
+                    if let egui::Shape::Text(text_shape_inner) = &mut text_shape {
+                        text_shape_inner.angle = angle_rad;
+                    }
+                }
+
+                painter.add(text_shape);
+            }
+
+            // Render LEF cell internal details (PINs, OBS) if enabled
+            if self.show_cell_details {
+                // Render PINs
+                for pin in &macro_def.pins {
+                    for port in &pin.ports {
+                        // Render PIN rectangles
+                        for rect_data in &port.rects {
+                            let detailed_layer = format!("{}.PIN", rect_data.layer);
+                            if !self.visible_layers.contains(&detailed_layer) {
+                                continue;
+                            }
+
+                            // Transform rectangle corners
+                            let corners = [
+                                (macro_def.origin.0 + rect_data.xl, macro_def.origin.1 + rect_data.yl),
+                                (macro_def.origin.0 + rect_data.xh, macro_def.origin.1 + rect_data.yl),
+                                (macro_def.origin.0 + rect_data.xh, macro_def.origin.1 + rect_data.yh),
+                                (macro_def.origin.0 + rect_data.xl, macro_def.origin.1 + rect_data.yh),
+                            ];
+
+                            let screen_points: Vec<egui::Pos2> = corners
+                                .iter()
+                                .map(|&corner| {
+                                    let (tx, ty) = self.transform_point(corner, (px, py), orientation, macro_size);
+                                    egui::pos2(
+                                        center.x + self.pan_x + (tx as f32 * self.zoom),
+                                        center.y + self.pan_y + (ty as f32 * self.zoom),
+                                    )
+                                })
+                                .collect();
+
+                            let color = self.get_layer_color(&detailed_layer);
+                            let mesh = Self::tessellate_polygon(&screen_points, color);
+                            painter.add(egui::Shape::Mesh(Arc::new(mesh)));
+                        }
+
+                        // Render PIN polygons
+                        for polygon_data in &port.polygons {
+                            let detailed_layer = format!("{}.PIN", polygon_data.layer);
+                            if !self.visible_layers.contains(&detailed_layer) {
+                                continue;
+                            }
+
+                            if polygon_data.points.len() >= 3 {
+                                let screen_points: Vec<egui::Pos2> = polygon_data
+                                    .points
+                                    .iter()
+                                    .map(|&(x, y)| {
+                                        let (tx, ty) = self.transform_point(
+                                            (macro_def.origin.0 + x, macro_def.origin.1 + y),
+                                            (px, py),
+                                            orientation,
+                                            macro_size,
+                                        );
+                                        egui::pos2(
+                                            center.x + self.pan_x + (tx as f32 * self.zoom),
+                                            center.y + self.pan_y + (ty as f32 * self.zoom),
+                                        )
+                                    })
+                                    .collect();
+
+                                if screen_points.len() >= 3 {
+                                    let color = self.get_layer_color(&detailed_layer);
+                                    let mesh = Self::tessellate_polygon(&screen_points, color);
+                                    painter.add(egui::Shape::Mesh(Arc::new(mesh)));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Render OBS (obstructions)
+                for obs in &macro_def.obs {
+                    // Render OBS rectangles
+                    for rect_data in &obs.rects {
+                        let detailed_layer = format!("{}.OBS", rect_data.layer);
+                        if !self.visible_layers.contains(&detailed_layer) {
+                            continue;
+                        }
+
+                        // Transform rectangle corners
+                        let corners = [
+                            (macro_def.origin.0 + rect_data.xl, macro_def.origin.1 + rect_data.yl),
+                            (macro_def.origin.0 + rect_data.xh, macro_def.origin.1 + rect_data.yl),
+                            (macro_def.origin.0 + rect_data.xh, macro_def.origin.1 + rect_data.yh),
+                            (macro_def.origin.0 + rect_data.xl, macro_def.origin.1 + rect_data.yh),
+                        ];
+
+                        let screen_points: Vec<egui::Pos2> = corners
+                            .iter()
+                            .map(|&corner| {
+                                let (tx, ty) = self.transform_point(corner, (px, py), orientation, macro_size);
+                                egui::pos2(
+                                    center.x + self.pan_x + (tx as f32 * self.zoom),
+                                    center.y + self.pan_y + (ty as f32 * self.zoom),
+                                )
+                            })
+                            .collect();
+
+                        let color = self.get_layer_color(&detailed_layer);
+                        // Render OBS as outline instead of filled
+                        painter.add(egui::Shape::closed_line(
+                            screen_points,
+                            egui::Stroke::new(1.0, color),
+                        ));
+                    }
+
+                    // Render OBS polygons
+                    for polygon_data in &obs.polygons {
+                        let detailed_layer = format!("{}.OBS", polygon_data.layer);
+                        if !self.visible_layers.contains(&detailed_layer) {
+                            continue;
+                        }
+
+                        if polygon_data.points.len() >= 3 {
+                            let screen_points: Vec<egui::Pos2> = polygon_data
+                                .points
+                                .iter()
+                                .map(|&(x, y)| {
+                                    let (tx, ty) = self.transform_point(
+                                        (macro_def.origin.0 + x, macro_def.origin.1 + y),
+                                        (px, py),
+                                        orientation,
+                                        macro_size,
+                                    );
+                                    egui::pos2(
+                                        center.x + self.pan_x + (tx as f32 * self.zoom),
+                                        center.y + self.pan_y + (ty as f32 * self.zoom),
+                                    )
+                                })
+                                .collect();
+
+                            if screen_points.len() >= 3 {
+                                let color = self.get_layer_color(&detailed_layer);
+                                // Render OBS as outline instead of filled
+                                painter.add(egui::Shape::closed_line(
+                                    screen_points,
+                                    egui::Stroke::new(1.0, color),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1804,7 +1995,23 @@ impl LefDefViewer {
 
             ui.separator();
 
-            if !self.lef_files.is_empty() {
+            // In DEF mode, show DEF structure instead of LEF macros
+            if self.def_mode && self.def_data.is_some() {
+                ui.heading("DEF Structure");
+
+                // Component name display toggle
+                ui.checkbox(&mut self.show_component_text, "Show Component Names");
+                // LEF cell details display toggle
+                ui.checkbox(&mut self.show_cell_details, "Show Cell Details (PINs, OBS)");
+
+                ui.separator();
+
+                if let Some(ref def) = self.def_data {
+                    ui.label(format!("Total Components: {}", def.components.len()));
+                    ui.label(format!("Pins: {}", def.pins.len()));
+                    ui.label(format!("Nets: {}", def.nets.len()));
+                }
+            } else if !self.lef_files.is_empty() {
                 ui.heading("LEF Macros (Cells)");
                 ui.label("Select cells to display:");
 
