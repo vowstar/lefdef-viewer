@@ -6,12 +6,13 @@ use lyon_tessellation::math::{point, Point};
 use lyon_tessellation::path::Path as LyonPath;
 use lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, FillVertex, VertexBuffers};
 use rfd::FileDialog;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::def::{reader::DefReader, Def};
 use crate::export::{self, VoltageConfig};
 use crate::lef::{reader::LefReader, Lef};
 use crate::voltage_dialog::VoltageDialog;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
@@ -65,6 +66,47 @@ struct LoadedLefFile {
     file_hash: String, // BLAKE3 hash of file content for deduplication and stable UI IDs
 }
 
+/// Cache key for identifying tessellated macro shapes
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+struct MeshCacheKey {
+    macro_name: String,
+    shape_type: String, // "PIN" or "OBS"
+    layer_name: String,
+    shape_index: usize,
+}
+
+/// Pre-tessellated mesh in world coordinates (before zoom/pan transform)
+#[derive(Clone, Debug)]
+struct CachedMesh {
+    vertices: Vec<egui::Pos2>, // Triangle vertices in world space
+    indices: Vec<u32>,
+    color: egui::Color32,
+}
+
+/// Message from background rendering thread
+#[derive(Debug)]
+enum RenderMessage {
+    MeshReady {
+        cache_key: MeshCacheKey,
+        mesh: CachedMesh,
+    },
+}
+
+/// Shape data for tessellation
+#[derive(Clone, Debug)]
+enum ShapeData {
+    Rectangle { xl: f64, yl: f64, xh: f64, yh: f64 },
+    Polygon { points: Vec<(f64, f64)> },
+}
+
+/// Work item for background tessellation
+#[derive(Clone, Debug)]
+struct TessellationJob {
+    cache_key: MeshCacheKey,
+    shape: ShapeData,
+    color: egui::Color32,
+}
+
 pub struct LefDefViewer {
     lef_files: Vec<LoadedLefFile>,
     def_data: Option<Def>,
@@ -109,6 +151,12 @@ pub struct LefDefViewer {
     macro_filter: String,
     // Animation timestamp for blink effect
     start_time: std::time::Instant,
+    // Progressive rendering
+    mesh_cache: Arc<RwLock<HashMap<MeshCacheKey, CachedMesh>>>,
+    render_job_sender: Option<mpsc::Sender<TessellationJob>>,
+    render_result_receiver: Option<mpsc::Receiver<RenderMessage>>,
+    tessellated_macros: Arc<Mutex<std::collections::HashSet<String>>>, // Track which macros have been fully tessellated
+    progressive_rendering_enabled: bool, // Toggle for progressive rendering feature
 }
 
 impl LefDefViewer {
@@ -178,6 +226,12 @@ impl LefDefViewer {
             macro_filter: String::new(),
             // Animation timestamp for blink effect
             start_time: std::time::Instant::now(),
+            // Progressive rendering
+            mesh_cache: Arc::new(RwLock::new(HashMap::new())),
+            render_job_sender: None,
+            render_result_receiver: None,
+            tessellated_macros: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            progressive_rendering_enabled: true, // Enabled by default
         }
     }
 
@@ -696,26 +750,33 @@ impl LefDefViewer {
             // Calculate macro size for transformation
             let macro_size = (macro_def.size_x, macro_def.size_y);
 
+            // Calculate bounding box for visibility check
+            let (min_x, min_y, max_x, max_y) =
+                self.transform_bbox(macro_size, (px, py), orientation);
+
+            // Convert to screen coordinates with Y-axis flip
+            let screen_min_x = center.x + self.pan_x + (min_x as f32 * self.zoom);
+            let screen_min_y =
+                center.y + self.pan_y + ((die_area_max_y as f32 - max_y as f32) * self.zoom);
+            let screen_max_x = center.x + self.pan_x + (max_x as f32 * self.zoom);
+            let screen_max_y =
+                center.y + self.pan_y + ((die_area_max_y as f32 - min_y as f32) * self.zoom);
+
+            let component_rect = egui::Rect::from_min_max(
+                egui::pos2(screen_min_x, screen_min_y),
+                egui::pos2(screen_max_x, screen_max_y),
+            );
+
+            // Viewport culling: skip if component is outside visible area
+            let clip_rect = painter.clip_rect();
+            let is_visible = component_rect.intersects(clip_rect);
+            if !is_visible {
+                continue; // Skip this component entirely
+            }
+
             // Transform and render OUTLINE if visible
             if self.visible_layers.contains("OUTLINE") {
                 let outline_color = self.get_layer_color("OUTLINE");
-
-                // Calculate bounding box after transformation
-                let (min_x, min_y, max_x, max_y) =
-                    self.transform_bbox(macro_size, (px, py), orientation);
-
-                // Convert to screen coordinates with Y-axis flip
-                let screen_min_x = center.x + self.pan_x + (min_x as f32 * self.zoom);
-                let screen_min_y =
-                    center.y + self.pan_y + ((die_area_max_y as f32 - max_y as f32) * self.zoom);
-                let screen_max_x = center.x + self.pan_x + (max_x as f32 * self.zoom);
-                let screen_max_y =
-                    center.y + self.pan_y + ((die_area_max_y as f32 - min_y as f32) * self.zoom);
-
-                let component_rect = egui::Rect::from_min_max(
-                    egui::pos2(screen_min_x, screen_min_y),
-                    egui::pos2(screen_max_x, screen_max_y),
-                );
 
                 painter.rect_stroke(
                     component_rect,
@@ -751,7 +812,250 @@ impl LefDefViewer {
             }
 
             // Render LEF cell internal details (PINs, OBS) if enabled
-            if self.show_cell_details {
+            // LOD: Only render details when component is large enough on screen (performance optimization)
+            const MIN_SCREEN_SIZE_FOR_DETAILS: f32 = 50.0; // Minimum screen pixels to show details
+            let screen_width = component_rect.width();
+            let screen_height = component_rect.height();
+            let screen_size = screen_width.max(screen_height); // Use larger dimension
+
+            if self.show_cell_details && screen_size >= MIN_SCREEN_SIZE_FOR_DETAILS {
+                // Queue macro for background tessellation if progressive rendering is enabled
+                if self.progressive_rendering_enabled {
+                    self.tessellate_macro_details(macro_def);
+
+                    // Render from cache (progressive rendering mode)
+                    if let Ok(cache) = self.mesh_cache.read() {
+                        let mut shape_index = 0;
+
+                        // Render cached PIN shapes
+                        for pin in &macro_def.pins {
+                            for port in &pin.ports {
+                                // Render PIN rectangles from cache
+                                for rect_data in &port.rects {
+                                    let detailed_layer = format!("{}.PIN", rect_data.layer);
+                                    if !self.visible_layers.contains(&detailed_layer) {
+                                        shape_index += 1;
+                                        continue;
+                                    }
+
+                                    let cache_key = MeshCacheKey {
+                                        macro_name: macro_def.name.clone(),
+                                        shape_type: "PIN".to_string(),
+                                        layer_name: detailed_layer,
+                                        shape_index,
+                                    };
+
+                                    if let Some(cached_mesh) = cache.get(&cache_key) {
+                                        // Transform cached world-space vertices to screen space
+                                        let transformed_vertices: Vec<egui::epaint::Vertex> =
+                                            cached_mesh
+                                                .vertices
+                                                .iter()
+                                                .map(|v| {
+                                                    let (tx, ty) = self.transform_point(
+                                                        (v.x as f64, v.y as f64),
+                                                        (px, py),
+                                                        orientation,
+                                                        macro_size,
+                                                    );
+                                                    let screen_x = center.x
+                                                        + self.pan_x
+                                                        + (tx as f32 * self.zoom);
+                                                    let screen_y = center.y
+                                                        + self.pan_y
+                                                        + ((die_area_max_y as f32 - ty as f32)
+                                                            * self.zoom);
+                                                    egui::epaint::Vertex {
+                                                        pos: egui::pos2(screen_x, screen_y),
+                                                        uv: egui::pos2(0.0, 0.0),
+                                                        color: cached_mesh.color,
+                                                    }
+                                                })
+                                                .collect();
+
+                                        let mesh = egui::epaint::Mesh {
+                                            indices: cached_mesh.indices.clone(),
+                                            vertices: transformed_vertices,
+                                            texture_id: egui::TextureId::default(),
+                                        };
+
+                                        painter.add(egui::Shape::Mesh(Arc::new(mesh)));
+                                    }
+
+                                    shape_index += 1;
+                                }
+
+                                // Render PIN polygons from cache
+                                for _polygon_data in &port.polygons {
+                                    let detailed_layer = format!("{}.PIN", _polygon_data.layer);
+                                    if !self.visible_layers.contains(&detailed_layer) {
+                                        shape_index += 1;
+                                        continue;
+                                    }
+
+                                    let cache_key = MeshCacheKey {
+                                        macro_name: macro_def.name.clone(),
+                                        shape_type: "PIN".to_string(),
+                                        layer_name: detailed_layer,
+                                        shape_index,
+                                    };
+
+                                    if let Some(cached_mesh) = cache.get(&cache_key) {
+                                        let transformed_vertices: Vec<egui::epaint::Vertex> =
+                                            cached_mesh
+                                                .vertices
+                                                .iter()
+                                                .map(|v| {
+                                                    let (tx, ty) = self.transform_point(
+                                                        (v.x as f64, v.y as f64),
+                                                        (px, py),
+                                                        orientation,
+                                                        macro_size,
+                                                    );
+                                                    let screen_x = center.x
+                                                        + self.pan_x
+                                                        + (tx as f32 * self.zoom);
+                                                    let screen_y = center.y
+                                                        + self.pan_y
+                                                        + ((die_area_max_y as f32 - ty as f32)
+                                                            * self.zoom);
+                                                    egui::epaint::Vertex {
+                                                        pos: egui::pos2(screen_x, screen_y),
+                                                        uv: egui::pos2(0.0, 0.0),
+                                                        color: cached_mesh.color,
+                                                    }
+                                                })
+                                                .collect();
+
+                                        let mesh = egui::epaint::Mesh {
+                                            indices: cached_mesh.indices.clone(),
+                                            vertices: transformed_vertices,
+                                            texture_id: egui::TextureId::default(),
+                                        };
+
+                                        painter.add(egui::Shape::Mesh(Arc::new(mesh)));
+                                    }
+
+                                    shape_index += 1;
+                                }
+                            }
+                        }
+
+                        // Render cached OBS shapes
+                        for obs in &macro_def.obs {
+                            // Render OBS rectangles from cache
+                            for _rect_data in &obs.rects {
+                                let detailed_layer = format!("{}.OBS", _rect_data.layer);
+                                if !self.visible_layers.contains(&detailed_layer) {
+                                    shape_index += 1;
+                                    continue;
+                                }
+
+                                let cache_key = MeshCacheKey {
+                                    macro_name: macro_def.name.clone(),
+                                    shape_type: "OBS".to_string(),
+                                    layer_name: detailed_layer,
+                                    shape_index,
+                                };
+
+                                if let Some(cached_mesh) = cache.get(&cache_key) {
+                                    let transformed_vertices: Vec<egui::epaint::Vertex> =
+                                        cached_mesh
+                                            .vertices
+                                            .iter()
+                                            .map(|v| {
+                                                let (tx, ty) = self.transform_point(
+                                                    (v.x as f64, v.y as f64),
+                                                    (px, py),
+                                                    orientation,
+                                                    macro_size,
+                                                );
+                                                let screen_x =
+                                                    center.x + self.pan_x + (tx as f32 * self.zoom);
+                                                let screen_y = center.y
+                                                    + self.pan_y
+                                                    + ((die_area_max_y as f32 - ty as f32)
+                                                        * self.zoom);
+                                                egui::epaint::Vertex {
+                                                    pos: egui::pos2(screen_x, screen_y),
+                                                    uv: egui::pos2(0.0, 0.0),
+                                                    color: cached_mesh.color,
+                                                }
+                                            })
+                                            .collect();
+
+                                    let mesh = egui::epaint::Mesh {
+                                        indices: cached_mesh.indices.clone(),
+                                        vertices: transformed_vertices,
+                                        texture_id: egui::TextureId::default(),
+                                    };
+
+                                    painter.add(egui::Shape::Mesh(Arc::new(mesh)));
+                                }
+
+                                shape_index += 1;
+                            }
+
+                            // Render OBS polygons from cache
+                            for _polygon_data in &obs.polygons {
+                                let detailed_layer = format!("{}.OBS", _polygon_data.layer);
+                                if !self.visible_layers.contains(&detailed_layer) {
+                                    shape_index += 1;
+                                    continue;
+                                }
+
+                                let cache_key = MeshCacheKey {
+                                    macro_name: macro_def.name.clone(),
+                                    shape_type: "OBS".to_string(),
+                                    layer_name: detailed_layer,
+                                    shape_index,
+                                };
+
+                                if let Some(cached_mesh) = cache.get(&cache_key) {
+                                    let transformed_vertices: Vec<egui::epaint::Vertex> =
+                                        cached_mesh
+                                            .vertices
+                                            .iter()
+                                            .map(|v| {
+                                                let (tx, ty) = self.transform_point(
+                                                    (v.x as f64, v.y as f64),
+                                                    (px, py),
+                                                    orientation,
+                                                    macro_size,
+                                                );
+                                                let screen_x =
+                                                    center.x + self.pan_x + (tx as f32 * self.zoom);
+                                                let screen_y = center.y
+                                                    + self.pan_y
+                                                    + ((die_area_max_y as f32 - ty as f32)
+                                                        * self.zoom);
+                                                egui::epaint::Vertex {
+                                                    pos: egui::pos2(screen_x, screen_y),
+                                                    uv: egui::pos2(0.0, 0.0),
+                                                    color: cached_mesh.color,
+                                                }
+                                            })
+                                            .collect();
+
+                                    let mesh = egui::epaint::Mesh {
+                                        indices: cached_mesh.indices.clone(),
+                                        vertices: transformed_vertices,
+                                        texture_id: egui::TextureId::default(),
+                                    };
+
+                                    painter.add(egui::Shape::Mesh(Arc::new(mesh)));
+                                }
+
+                                shape_index += 1;
+                            }
+                        }
+                    }
+
+                    // Skip synchronous rendering when progressive rendering is enabled
+                    continue;
+                }
+
+                // Fallback: synchronous rendering (when progressive rendering is disabled)
                 // Render PINs
                 for pin in &macro_def.pins {
                     for port in &pin.ports {
@@ -1259,6 +1563,260 @@ impl LefDefViewer {
         mesh.indices = buffers.indices.iter().map(|&i| i as u32).collect();
 
         mesh
+    }
+
+    /// Start the background tessellation worker thread
+    fn start_progressive_rendering(&mut self) {
+        if !self.progressive_rendering_enabled || self.render_job_sender.is_some() {
+            return; // Already started or disabled
+        }
+
+        let (job_tx, job_rx) = mpsc::channel::<TessellationJob>();
+        let (result_tx, result_rx) = mpsc::channel::<RenderMessage>();
+
+        self.render_job_sender = Some(job_tx);
+        self.render_result_receiver = Some(result_rx);
+
+        // Spawn background worker thread
+        thread::spawn(move || {
+            log::info!("Progressive rendering worker thread started");
+            while let Ok(job) = job_rx.recv() {
+                let cached_mesh = match job.shape {
+                    ShapeData::Rectangle { xl, yl, xh, yh } => {
+                        // Create simple quad as two triangles
+                        let vertices = vec![
+                            egui::pos2(xl as f32, yl as f32), // 0: bottom-left
+                            egui::pos2(xh as f32, yl as f32), // 1: bottom-right
+                            egui::pos2(xh as f32, yh as f32), // 2: top-right
+                            egui::pos2(xl as f32, yh as f32), // 3: top-left
+                        ];
+                        let indices = vec![0, 1, 2, 0, 2, 3]; // Two triangles
+
+                        CachedMesh {
+                            vertices,
+                            indices,
+                            color: job.color,
+                        }
+                    }
+                    ShapeData::Polygon { ref points } => {
+                        // Tessellate the polygon in world coordinates
+                        let pos_points: Vec<egui::Pos2> = points
+                            .iter()
+                            .map(|&(x, y)| egui::pos2(x as f32, y as f32))
+                            .collect();
+
+                        if pos_points.len() < 3 {
+                            continue;
+                        }
+
+                        // Build lyon path
+                        let mut builder = LyonPath::builder();
+                        builder.begin(point(pos_points[0].x, pos_points[0].y));
+                        for p in &pos_points[1..] {
+                            builder.line_to(point(p.x, p.y));
+                        }
+                        builder.end(true);
+                        let path = builder.build();
+
+                        // Tessellate
+                        let mut buffers: VertexBuffers<Point, u16> = VertexBuffers::new();
+                        let mut tessellator = FillTessellator::new();
+                        if tessellator
+                            .tessellate_path(
+                                &path,
+                                &FillOptions::default(),
+                                &mut BuffersBuilder::new(&mut buffers, |vertex: FillVertex| {
+                                    vertex.position()
+                                }),
+                            )
+                            .is_err()
+                        {
+                            continue;
+                        }
+
+                        CachedMesh {
+                            vertices: buffers
+                                .vertices
+                                .iter()
+                                .map(|v| egui::pos2(v.x, v.y))
+                                .collect(),
+                            indices: buffers.indices.iter().map(|&i| i as u32).collect(),
+                            color: job.color,
+                        }
+                    }
+                };
+
+                // Send result back
+                if result_tx
+                    .send(RenderMessage::MeshReady {
+                        cache_key: job.cache_key,
+                        mesh: cached_mesh,
+                    })
+                    .is_err()
+                {
+                    break; // Main thread dropped the receiver, exit worker
+                }
+            }
+            log::info!("Progressive rendering worker thread exiting");
+        });
+    }
+
+    /// Process incoming render messages from background thread
+    fn process_render_messages(&mut self, ctx: &egui::Context) {
+        if let Some(receiver) = &self.render_result_receiver {
+            // Process all available messages
+            while let Ok(message) = receiver.try_recv() {
+                match message {
+                    RenderMessage::MeshReady { cache_key, mesh } => {
+                        // Store in cache
+                        if let Ok(mut cache) = self.mesh_cache.write() {
+                            cache.insert(cache_key, mesh);
+                        }
+                        // Request repaint to show the new mesh
+                        ctx.request_repaint();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Queue a macro's details for background tessellation
+    fn tessellate_macro_details(&self, macro_def: &crate::lef::LefMacro) {
+        if !self.progressive_rendering_enabled {
+            return;
+        }
+
+        // Check if already tessellated
+        if let Ok(tessellated) = self.tessellated_macros.lock() {
+            if tessellated.contains(&macro_def.name) {
+                return; // Already done
+            }
+        }
+
+        let Some(sender) = &self.render_job_sender else {
+            return;
+        };
+
+        let mut shape_index = 0;
+
+        // Queue PIN shapes (both rectangles and polygons)
+        for pin in &macro_def.pins {
+            for port in &pin.ports {
+                // Queue rectangles
+                for rect_data in &port.rects {
+                    let detailed_layer = format!("{}.PIN", rect_data.layer);
+                    let color = self.get_layer_color(&detailed_layer);
+
+                    let job = TessellationJob {
+                        cache_key: MeshCacheKey {
+                            macro_name: macro_def.name.clone(),
+                            shape_type: "PIN".to_string(),
+                            layer_name: detailed_layer,
+                            shape_index,
+                        },
+                        shape: ShapeData::Rectangle {
+                            xl: macro_def.origin.0 + rect_data.xl,
+                            yl: macro_def.origin.1 + rect_data.yl,
+                            xh: macro_def.origin.0 + rect_data.xh,
+                            yh: macro_def.origin.1 + rect_data.yh,
+                        },
+                        color,
+                    };
+
+                    let _ = sender.send(job);
+                    shape_index += 1;
+                }
+
+                // Queue polygons
+                for polygon_data in &port.polygons {
+                    let detailed_layer = format!("{}.PIN", polygon_data.layer);
+                    let color = self.get_layer_color(&detailed_layer);
+
+                    // Transform polygon points with origin offset
+                    let transformed_points: Vec<(f64, f64)> = polygon_data
+                        .points
+                        .iter()
+                        .map(|&(x, y)| (macro_def.origin.0 + x, macro_def.origin.1 + y))
+                        .collect();
+
+                    let job = TessellationJob {
+                        cache_key: MeshCacheKey {
+                            macro_name: macro_def.name.clone(),
+                            shape_type: "PIN".to_string(),
+                            layer_name: detailed_layer,
+                            shape_index,
+                        },
+                        shape: ShapeData::Polygon {
+                            points: transformed_points,
+                        },
+                        color,
+                    };
+
+                    let _ = sender.send(job);
+                    shape_index += 1;
+                }
+            }
+        }
+
+        // Queue OBS shapes (both rectangles and polygons)
+        for obs in &macro_def.obs {
+            // Queue rectangles
+            for rect_data in &obs.rects {
+                let detailed_layer = format!("{}.OBS", rect_data.layer);
+                let color = self.get_layer_color(&detailed_layer);
+
+                let job = TessellationJob {
+                    cache_key: MeshCacheKey {
+                        macro_name: macro_def.name.clone(),
+                        shape_type: "OBS".to_string(),
+                        layer_name: detailed_layer,
+                        shape_index,
+                    },
+                    shape: ShapeData::Rectangle {
+                        xl: macro_def.origin.0 + rect_data.xl,
+                        yl: macro_def.origin.1 + rect_data.yl,
+                        xh: macro_def.origin.0 + rect_data.xh,
+                        yh: macro_def.origin.1 + rect_data.yh,
+                    },
+                    color,
+                };
+
+                let _ = sender.send(job);
+                shape_index += 1;
+            }
+
+            // Queue polygons
+            for polygon_data in &obs.polygons {
+                let detailed_layer = format!("{}.OBS", polygon_data.layer);
+                let color = self.get_layer_color(&detailed_layer);
+
+                // Transform polygon points with origin offset
+                let transformed_points: Vec<(f64, f64)> = polygon_data
+                    .points
+                    .iter()
+                    .map(|&(x, y)| (macro_def.origin.0 + x, macro_def.origin.1 + y))
+                    .collect();
+
+                let job = TessellationJob {
+                    cache_key: MeshCacheKey {
+                        macro_name: macro_def.name.clone(),
+                        shape_type: "OBS".to_string(),
+                        layer_name: detailed_layer,
+                        shape_index,
+                    },
+                    shape: ShapeData::Polygon {
+                        points: transformed_points,
+                    },
+                    color,
+                };
+
+                let _ = sender.send(job);
+                shape_index += 1;
+            }
+        }
+
+        // Log completion
+        log::debug!("Queued {} shapes for macro {}", shape_index, macro_def.name);
     }
 
     // Utility function to calculate polygon area (shoelace formula)
@@ -4115,6 +4673,13 @@ impl eframe::App for LefDefViewer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Check loading progress and handle async messages
         self.check_loading_progress(ctx);
+
+        // Start progressive rendering worker if not already started
+        self.start_progressive_rendering();
+
+        // Process incoming render messages from background thread
+        self.process_render_messages(ctx);
+
         if let Some(error) = &self.error_message.clone() {
             egui::Window::new("Error")
                 .collapsible(false)
