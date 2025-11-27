@@ -35,7 +35,7 @@ enum LoadingState {
 enum LoadingMessage {
     LefLoaded(Result<(Lef, String), String>, String), // Result(Lef + hash), file path
     DefLoaded(Box<Result<Def, String>>, String),      // Result and file path
-    LefFileSelected(Option<String>),                  // File path from dialog (None if cancelled)
+    LefFilesSelected(Vec<String>),                    // File paths from dialog (empty if cancelled)
     DefFileSelected(Option<String>),                  // File path from dialog (None if cancelled)
 }
 
@@ -221,8 +221,8 @@ impl LefDefViewer {
                                 self.error_message = Some(error);
                             }
                         },
-                        LoadingMessage::LefFileSelected(path_opt) => {
-                            if let Some(path) = path_opt {
+                        LoadingMessage::LefFilesSelected(paths) => {
+                            for path in paths {
                                 self.start_lef_file_loading(path);
                             }
                         }
@@ -1385,10 +1385,16 @@ impl LefDefViewer {
         thread::spawn(move || {
             let result = FileDialog::new()
                 .add_filter("LEF files", &["lef"])
-                .pick_file()
-                .map(|path| path.to_string_lossy().to_string());
+                .pick_files()
+                .map(|paths| {
+                    paths
+                        .iter()
+                        .map(|path| path.to_string_lossy().to_string())
+                        .collect::<Vec<String>>()
+                })
+                .unwrap_or_default();
 
-            let _ = tx.send(LoadingMessage::LefFileSelected(result));
+            let _ = tx.send(LoadingMessage::LefFilesSelected(result));
         });
     }
 
