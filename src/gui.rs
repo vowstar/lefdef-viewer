@@ -414,7 +414,7 @@ impl LefDefViewer {
         let (width, height) = macro_size;
 
         // Transform all four corners
-        let corners = vec![
+        let corners = [
             (0.0, 0.0),      // Bottom-left
             (width, 0.0),    // Bottom-right
             (width, height), // Top-right
@@ -492,6 +492,90 @@ impl LefDefViewer {
                 "DEF Mode: {} components total, {} matched, {} unique missing cells",
                 total_components, matched_count, missing_count
             );
+        }
+    }
+
+    /// Render DEF components by transforming and rendering corresponding LEF macros
+    fn render_def_components(
+        &self,
+        painter: &egui::Painter,
+        center: egui::Pos2,
+        _texts_to_render: &mut Vec<(egui::Pos2, String, egui::FontId, egui::Color32)>,
+        _smart_texts_to_render: &mut Vec<(TextPositioning, String, egui::FontId, egui::Color32)>,
+    ) {
+        let def = match &self.def_data {
+            Some(d) => d,
+            None => return,
+        };
+
+        // DEF coordinates are assumed to be in microns (database units = 1000)
+        // Convert to LEF units by dividing by 1000
+        let db_units = 1000.0;
+
+        // Iterate through all components in DEF
+        for component in &def.components {
+            // Check if we have a matching LEF macro
+            if self.missing_cells.contains(&component.macro_name) {
+                // Skip missing cells for now (could render placeholder in future)
+                continue;
+            }
+
+            // Find the LEF macro for this component
+            let macro_def = self
+                .lef_files
+                .iter()
+                .flat_map(|f| &f.data.macros)
+                .find(|m| m.name == component.macro_name);
+
+            let macro_def = match macro_def {
+                Some(m) => m,
+                None => continue,
+            };
+
+            // Get component placement from DefPlacement structure
+            let (px, py, orientation) = if let Some(ref placement) = component.placement {
+                // Convert DEF database units to LEF units (microns)
+                let px = placement.x / db_units;
+                let py = placement.y / db_units;
+                let orientation = &placement.orientation;
+                (px, py, orientation.as_str())
+            } else {
+                // No placement info, skip this component
+                continue;
+            };
+
+            // Calculate macro size for transformation
+            let macro_size = (macro_def.size_x, macro_def.size_y);
+
+            // Transform and render OUTLINE if visible
+            if self.visible_layers.contains("OUTLINE") {
+                let outline_color = self.get_layer_color("OUTLINE");
+
+                // Calculate bounding box after transformation
+                let (min_x, min_y, max_x, max_y) =
+                    self.transform_bbox(macro_size, (px, py), orientation);
+
+                // Convert to screen coordinates
+                let screen_min_x = center.x + self.pan_x + (min_x as f32 * self.zoom);
+                let screen_min_y = center.y + self.pan_y + (min_y as f32 * self.zoom);
+                let screen_max_x = center.x + self.pan_x + (max_x as f32 * self.zoom);
+                let screen_max_y = center.y + self.pan_y + (max_y as f32 * self.zoom);
+
+                let component_rect = egui::Rect::from_min_max(
+                    egui::pos2(screen_min_x, screen_min_y),
+                    egui::pos2(screen_max_x, screen_max_y),
+                );
+
+                painter.rect_stroke(
+                    component_rect,
+                    0.0,
+                    egui::Stroke::new(1.0, outline_color),
+                    egui::StrokeKind::Middle,
+                );
+            }
+
+            // TODO: Transform and render PINs and OBS
+            // This will be implemented in next step
         }
     }
 
@@ -1660,7 +1744,7 @@ impl LefDefViewer {
 
                         ui.colored_label(
                             egui::Color32::from_rgb(100, 200, 100),
-                            format!("DEF Mode Active")
+                            "DEF Mode Active"
                         );
                         ui.label(format!("Components: {}", total_components));
                         ui.label(format!("Matched: {}", matched_instances));
@@ -2286,71 +2370,265 @@ impl LefDefViewer {
         let mut texts_to_render = Vec::new();
         let mut smart_texts_to_render = Vec::new();
 
-        for lef_file in &self.lef_files {
-            for macro_def in &lef_file.data.macros {
-                // Only render selected cells (or all if none selected)
-                if !self.selected_cells.is_empty() && !self.selected_cells.contains(&macro_def.name)
-                {
-                    continue;
-                }
-
-                // Calculate macro position - use origin as reference point but don't offset the display
-                // The PIN coordinates are already absolute coordinates within the macro space
-                let macro_origin_x = center.x + self.pan_x;
-                let macro_origin_y = center.y + self.pan_y;
-
-                // OUTLINE box is positioned at macro_origin (SIZE defines the box)
-                // ORIGIN offset is applied to PIN/OBS coordinates, not to outline
-                let outline_x = macro_origin_x;
-                let outline_y = macro_origin_y;
-                let w = macro_def.size_x as f32 * self.zoom;
-                let h = macro_def.size_y as f32 * self.zoom;
-
-                let macro_rect = egui::Rect::from_min_size(
-                    egui::pos2(outline_x, outline_y),
-                    egui::vec2(w.max(1.0), h.max(1.0)),
-                );
-
-                // Render macro outline if OUTLINE layer is visible
-                if self.visible_layers.contains("OUTLINE") {
-                    let outline_color = self.get_layer_color("OUTLINE");
-                    painter.rect_stroke(
-                        macro_rect,
-                        0.0,
-                        egui::Stroke::new(2.0, outline_color),
-                        egui::StrokeKind::Middle,
-                    );
-                }
-
-                // Render pins with layer visibility
-                // PIN coordinates are absolute within the macro coordinate system
-                // We apply the same ORIGIN offset to align them with the OUTLINE
-                for pin in &macro_def.pins {
-                    // Check if this specific pin is selected (if any pins are selected)
-                    let pin_id = format!("{}::{}", macro_def.name, pin.name);
-                    if !self.selected_lef_pins.is_empty()
-                        && !self.selected_lef_pins.contains(&pin_id)
+        // Choose rendering mode based on whether DEF is loaded
+        if self.def_mode && self.def_data.is_some() {
+            // DEF mode: Render DEF components with transformed LEF macros
+            self.render_def_components(
+                &painter,
+                center,
+                &mut texts_to_render,
+                &mut smart_texts_to_render,
+            );
+        } else {
+            // LEF mode: Render LEF macros directly
+            for lef_file in &self.lef_files {
+                for macro_def in &lef_file.data.macros {
+                    // Only render selected cells (or all if none selected)
+                    if !self.selected_cells.is_empty()
+                        && !self.selected_cells.contains(&macro_def.name)
                     {
                         continue;
                     }
 
-                    let mut pin_bounds: Option<(f32, f32, f32, f32)> = None; // min_x, min_y, max_x, max_y
-                    let mut has_visible_shapes = false;
+                    // Calculate macro position - use origin as reference point but don't offset the display
+                    // The PIN coordinates are already absolute coordinates within the macro space
+                    let macro_origin_x = center.x + self.pan_x;
+                    let macro_origin_y = center.y + self.pan_y;
 
-                    for port in &pin.ports {
-                        // Render rectangles
-                        for rect_data in &port.rects {
-                            let detailed_layer = format!("{}.PIN", rect_data.layer);
+                    // OUTLINE box is positioned at macro_origin (SIZE defines the box)
+                    // ORIGIN offset is applied to PIN/OBS coordinates, not to outline
+                    let outline_x = macro_origin_x;
+                    let outline_y = macro_origin_y;
+                    let w = macro_def.size_x as f32 * self.zoom;
+                    let h = macro_def.size_y as f32 * self.zoom;
+
+                    let macro_rect = egui::Rect::from_min_size(
+                        egui::pos2(outline_x, outline_y),
+                        egui::vec2(w.max(1.0), h.max(1.0)),
+                    );
+
+                    // Render macro outline if OUTLINE layer is visible
+                    if self.visible_layers.contains("OUTLINE") {
+                        let outline_color = self.get_layer_color("OUTLINE");
+                        painter.rect_stroke(
+                            macro_rect,
+                            0.0,
+                            egui::Stroke::new(2.0, outline_color),
+                            egui::StrokeKind::Middle,
+                        );
+                    }
+
+                    // Render pins with layer visibility
+                    // PIN coordinates are absolute within the macro coordinate system
+                    // We apply the same ORIGIN offset to align them with the OUTLINE
+                    for pin in &macro_def.pins {
+                        // Check if this specific pin is selected (if any pins are selected)
+                        let pin_id = format!("{}::{}", macro_def.name, pin.name);
+                        if !self.selected_lef_pins.is_empty()
+                            && !self.selected_lef_pins.contains(&pin_id)
+                        {
+                            continue;
+                        }
+
+                        let mut pin_bounds: Option<(f32, f32, f32, f32)> = None; // min_x, min_y, max_x, max_y
+                        let mut has_visible_shapes = false;
+
+                        for port in &pin.ports {
+                            // Render rectangles
+                            for rect_data in &port.rects {
+                                let detailed_layer = format!("{}.PIN", rect_data.layer);
+                                if !self.visible_layers.contains(&detailed_layer) {
+                                    continue;
+                                }
+
+                                has_visible_shapes = true;
+
+                                // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
+                                // yl is bottom edge, yh is top edge in LEF coordinates
+                                // PIN coordinates are relative to ORIGIN, so add ORIGIN offset
+                                let pin_rect = egui::Rect::from_min_max(
+                                    egui::pos2(
+                                        outline_x
+                                            + ((macro_def.origin.0 + rect_data.xl) as f32
+                                                * self.zoom),
+                                        outline_y
+                                            + ((macro_def.size_y
+                                                - macro_def.origin.1
+                                                - rect_data.yh)
+                                                as f32
+                                                * self.zoom),
+                                    ),
+                                    egui::pos2(
+                                        outline_x
+                                            + ((macro_def.origin.0 + rect_data.xh) as f32
+                                                * self.zoom),
+                                        outline_y
+                                            + ((macro_def.size_y
+                                                - macro_def.origin.1
+                                                - rect_data.yl)
+                                                as f32
+                                                * self.zoom),
+                                    ),
+                                );
+
+                                let color = self.get_layer_color(&detailed_layer);
+                                painter.rect_filled(pin_rect, 0.0, color);
+
+                                // Update pin bounds for text positioning (with Y-flip and ORIGIN offset)
+                                let rect_min_x = outline_x
+                                    + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom);
+                                let rect_min_y = outline_y
+                                    + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh)
+                                        as f32
+                                        * self.zoom);
+                                let rect_max_x = outline_x
+                                    + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom);
+                                let rect_max_y = outline_y
+                                    + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl)
+                                        as f32
+                                        * self.zoom);
+
+                                if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
+                                    pin_bounds = Some((
+                                        min_x.min(rect_min_x),
+                                        min_y.min(rect_min_y),
+                                        max_x.max(rect_max_x),
+                                        max_y.max(rect_max_y),
+                                    ));
+                                } else {
+                                    pin_bounds =
+                                        Some((rect_min_x, rect_min_y, rect_max_x, rect_max_y));
+                                }
+                            }
+
+                            // Group polygons by layer for this specific PORT (within this PIN)
+                            // Boolean operations only apply within the same pin and same layer
+                            let mut layer_polygons: std::collections::HashMap<
+                                String,
+                                Vec<&crate::lef::LefPolygon>,
+                            > = std::collections::HashMap::new();
+                            for polygon_data in &port.polygons {
+                                let detailed_layer = format!("{}.PIN", polygon_data.layer);
+                                if !self.visible_layers.contains(&detailed_layer) {
+                                    continue;
+                                }
+                                layer_polygons
+                                    .entry(detailed_layer.clone())
+                                    .or_default()
+                                    .push(polygon_data);
+                            }
+
+                            // Sort layers by z-order to prevent flickering
+                            let mut sorted_layers: Vec<_> = layer_polygons.into_iter().collect();
+                            sorted_layers
+                                .sort_by_key(|(layer_name, _)| self.get_layer_order(layer_name));
+
+                            // Process each layer's polygons with proper boolean operations
+                            for (layer_name, polygons) in sorted_layers {
+                                has_visible_shapes = true;
+                                let color = self.get_layer_color(&layer_name);
+
+                                // Draw each polygon independently (LEF only has positive shapes)
+                                for polygon_data in &polygons {
+                                    if polygon_data.points.len() >= 3 {
+                                        // Convert LEF coordinates to screen coordinates
+                                        // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
+                                        // PIN coordinates are relative to ORIGIN, so add ORIGIN offset
+                                        let screen_points: Vec<egui::Pos2> = polygon_data
+                                            .points
+                                            .iter()
+                                            .map(|(x, y)| {
+                                                egui::pos2(
+                                                    outline_x
+                                                        + ((macro_def.origin.0 + *x) as f32
+                                                            * self.zoom),
+                                                    outline_y
+                                                        + ((macro_def.size_y
+                                                            - macro_def.origin.1
+                                                            - *y)
+                                                            as f32
+                                                            * self.zoom),
+                                                )
+                                            })
+                                            .collect();
+
+                                        if screen_points.len() >= 3 {
+                                            // Calculate bounds for text positioning
+                                            let mut poly_min_x = f32::INFINITY;
+                                            let mut poly_min_y = f32::INFINITY;
+                                            let mut poly_max_x = f32::NEG_INFINITY;
+                                            let mut poly_max_y = f32::NEG_INFINITY;
+
+                                            for point in &screen_points {
+                                                poly_min_x = poly_min_x.min(point.x);
+                                                poly_min_y = poly_min_y.min(point.y);
+                                                poly_max_x = poly_max_x.max(point.x);
+                                                poly_max_y = poly_max_y.max(point.y);
+                                            }
+
+                                            // Use lyon tessellation for concave polygon fill
+                                            let mesh =
+                                                Self::tessellate_polygon(&screen_points, color);
+                                            painter.add(egui::Shape::Mesh(Arc::new(mesh)));
+
+                                            // Update pin bounds for text positioning
+                                            if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
+                                                pin_bounds = Some((
+                                                    min_x.min(poly_min_x),
+                                                    min_y.min(poly_min_y),
+                                                    max_x.max(poly_max_x),
+                                                    max_y.max(poly_max_y),
+                                                ));
+                                            } else {
+                                                pin_bounds = Some((
+                                                    poly_min_x, poly_min_y, poly_max_x, poly_max_y,
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Add PIN text once per pin if LABEL layer is visible, zoom is high enough, and pin has visible shapes
+                        if self.visible_layers.contains("LABEL")
+                            && self.zoom > 0.2
+                            && has_visible_shapes
+                        {
+                            if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
+                                let pin_center =
+                                    egui::pos2((min_x + max_x) * 0.5, (min_y + max_y) * 0.5);
+                                texts_to_render.push((
+                                    pin_center,
+                                    pin.name.clone(),
+                                    egui::FontId::monospace(12.0),
+                                    egui::Color32::WHITE,
+                                ));
+                            }
+                        }
+                    }
+
+                    // Render obstructions
+                    for obs in &macro_def.obs {
+                        // Render obstruction rectangles
+                        for rect_data in &obs.rects {
+                            let detailed_layer = format!("{}.OBS", rect_data.layer);
+
                             if !self.visible_layers.contains(&detailed_layer) {
                                 continue;
                             }
 
-                            has_visible_shapes = true;
+                            // Check if this specific OBS layer is selected (if any OBS are selected)
+                            let obs_id = format!("{}::{}", macro_def.name, rect_data.layer);
+                            if !self.selected_lef_obs.is_empty()
+                                && !self.selected_lef_obs.contains(&obs_id)
+                            {
+                                continue;
+                            }
 
                             // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
-                            // yl is bottom edge, yh is top edge in LEF coordinates
-                            // PIN coordinates are relative to ORIGIN, so add ORIGIN offset
-                            let pin_rect = egui::Rect::from_min_max(
+                            // OBS coordinates are relative to ORIGIN, so add ORIGIN offset
+                            let obs_rect = egui::Rect::from_min_max(
                                 egui::pos2(
                                     outline_x
                                         + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom),
@@ -2368,68 +2646,115 @@ impl LefDefViewer {
                                             * self.zoom),
                                 ),
                             );
-
                             let color = self.get_layer_color(&detailed_layer);
-                            painter.rect_filled(pin_rect, 0.0, color);
+                            // Render OBS as dashed outline instead of filled rectangle
+                            let stroke = egui::Stroke::new(1.0, color);
+                            painter.rect_stroke(obs_rect, 0.0, stroke, egui::StrokeKind::Middle);
 
-                            // Update pin bounds for text positioning (with Y-flip and ORIGIN offset)
-                            let rect_min_x = outline_x
-                                + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom);
-                            let rect_min_y = outline_y
-                                + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh) as f32
-                                    * self.zoom);
-                            let rect_max_x = outline_x
-                                + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom);
-                            let rect_max_y = outline_y
-                                + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl) as f32
-                                    * self.zoom);
+                            // Add dashed pattern by drawing additional lines
+                            let dash_length = 3.0;
+                            let gap_length = 2.0;
+                            let pattern_length = dash_length + gap_length;
 
-                            if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
-                                pin_bounds = Some((
-                                    min_x.min(rect_min_x),
-                                    min_y.min(rect_min_y),
-                                    max_x.max(rect_max_x),
-                                    max_y.max(rect_max_y),
-                                ));
-                            } else {
-                                pin_bounds = Some((rect_min_x, rect_min_y, rect_max_x, rect_max_y));
+                            // Top edge dashes
+                            let mut x = obs_rect.min.x;
+                            while x < obs_rect.max.x {
+                                let end_x = (x + dash_length).min(obs_rect.max.x);
+                                painter.line_segment(
+                                    [
+                                        egui::pos2(x, obs_rect.min.y),
+                                        egui::pos2(end_x, obs_rect.min.y),
+                                    ],
+                                    stroke,
+                                );
+                                x += pattern_length;
+                            }
+
+                            // Bottom edge dashes
+                            let mut x = obs_rect.min.x;
+                            while x < obs_rect.max.x {
+                                let end_x = (x + dash_length).min(obs_rect.max.x);
+                                painter.line_segment(
+                                    [
+                                        egui::pos2(x, obs_rect.max.y),
+                                        egui::pos2(end_x, obs_rect.max.y),
+                                    ],
+                                    stroke,
+                                );
+                                x += pattern_length;
+                            }
+
+                            // Left edge dashes
+                            let mut y = obs_rect.min.y;
+                            while y < obs_rect.max.y {
+                                let end_y = (y + dash_length).min(obs_rect.max.y);
+                                painter.line_segment(
+                                    [
+                                        egui::pos2(obs_rect.min.x, y),
+                                        egui::pos2(obs_rect.min.x, end_y),
+                                    ],
+                                    stroke,
+                                );
+                                y += pattern_length;
+                            }
+
+                            // Right edge dashes
+                            let mut y = obs_rect.min.y;
+                            while y < obs_rect.max.y {
+                                let end_y = (y + dash_length).min(obs_rect.max.y);
+                                painter.line_segment(
+                                    [
+                                        egui::pos2(obs_rect.max.x, y),
+                                        egui::pos2(obs_rect.max.x, end_y),
+                                    ],
+                                    stroke,
+                                );
+                                y += pattern_length;
                             }
                         }
 
-                        // Group polygons by layer for this specific PORT (within this PIN)
-                        // Boolean operations only apply within the same pin and same layer
-                        let mut layer_polygons: std::collections::HashMap<
+                        // Group obstruction polygons by layer to avoid z-fighting
+                        let mut obs_layer_polygons: std::collections::HashMap<
                             String,
                             Vec<&crate::lef::LefPolygon>,
                         > = std::collections::HashMap::new();
-                        for polygon_data in &port.polygons {
-                            let detailed_layer = format!("{}.PIN", polygon_data.layer);
+                        for polygon_data in &obs.polygons {
+                            let detailed_layer = format!("{}.OBS", polygon_data.layer);
                             if !self.visible_layers.contains(&detailed_layer) {
                                 continue;
                             }
-                            layer_polygons
+
+                            // Check if this specific OBS layer is selected (if any OBS are selected)
+                            let obs_id = format!("{}::{}", macro_def.name, polygon_data.layer);
+                            if !self.selected_lef_obs.is_empty()
+                                && !self.selected_lef_obs.contains(&obs_id)
+                            {
+                                continue;
+                            }
+
+                            obs_layer_polygons
                                 .entry(detailed_layer.clone())
                                 .or_default()
                                 .push(polygon_data);
                         }
 
-                        // Sort layers by z-order to prevent flickering
-                        let mut sorted_layers: Vec<_> = layer_polygons.into_iter().collect();
-                        sorted_layers
+                        // Sort obstruction layers by z-order to prevent flickering
+                        let mut sorted_obs_layers: Vec<_> =
+                            obs_layer_polygons.into_iter().collect();
+                        sorted_obs_layers
                             .sort_by_key(|(layer_name, _)| self.get_layer_order(layer_name));
 
-                        // Process each layer's polygons with proper boolean operations
-                        for (layer_name, polygons) in sorted_layers {
-                            has_visible_shapes = true;
+                        // Render obstruction polygons by layer
+                        for (layer_name, polygons) in sorted_obs_layers {
                             let color = self.get_layer_color(&layer_name);
 
-                            // Draw each polygon independently (LEF only has positive shapes)
+                            // Draw each OBS polygon independently (LEF only has positive shapes)
                             for polygon_data in &polygons {
                                 if polygon_data.points.len() >= 3 {
                                     // Convert LEF coordinates to screen coordinates
                                     // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
-                                    // PIN coordinates are relative to ORIGIN, so add ORIGIN offset
-                                    let screen_points: Vec<egui::Pos2> = polygon_data
+                                    // OBS coordinates are relative to ORIGIN, so add ORIGIN offset
+                                    let mut screen_points: Vec<egui::Pos2> = polygon_data
                                         .points
                                         .iter()
                                         .map(|(x, y)| {
@@ -2446,265 +2771,52 @@ impl LefDefViewer {
                                         .collect();
 
                                     if screen_points.len() >= 3 {
-                                        // Calculate bounds for text positioning
-                                        let mut poly_min_x = f32::INFINITY;
-                                        let mut poly_min_y = f32::INFINITY;
-                                        let mut poly_max_x = f32::NEG_INFINITY;
-                                        let mut poly_max_y = f32::NEG_INFINITY;
+                                        // Explicitly close the polygon by adding the first point at the end
+                                        let first_point = screen_points[0];
+                                        screen_points.push(first_point);
 
-                                        for point in &screen_points {
-                                            poly_min_x = poly_min_x.min(point.x);
-                                            poly_min_y = poly_min_y.min(point.y);
-                                            poly_max_x = poly_max_x.max(point.x);
-                                            poly_max_y = poly_max_y.max(point.y);
-                                        }
+                                        // Draw dashed outline for OBS polygons
+                                        let stroke = egui::Stroke::new(1.0, color);
 
-                                        // Use lyon tessellation for concave polygon fill
-                                        let mesh = Self::tessellate_polygon(&screen_points, color);
-                                        painter.add(egui::Shape::Mesh(Arc::new(mesh)));
+                                        // Draw dashed lines between consecutive points
+                                        for i in 0..(screen_points.len() - 1) {
+                                            let start = screen_points[i];
+                                            let end = screen_points[i + 1];
 
-                                        // Update pin bounds for text positioning
-                                        if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
-                                            pin_bounds = Some((
-                                                min_x.min(poly_min_x),
-                                                min_y.min(poly_min_y),
-                                                max_x.max(poly_max_x),
-                                                max_y.max(poly_max_y),
-                                            ));
-                                        } else {
-                                            pin_bounds = Some((
-                                                poly_min_x, poly_min_y, poly_max_x, poly_max_y,
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                                            // Calculate line direction and length
+                                            let dx = end.x - start.x;
+                                            let dy = end.y - start.y;
+                                            let line_length = (dx * dx + dy * dy).sqrt();
 
-                    // Add PIN text once per pin if LABEL layer is visible, zoom is high enough, and pin has visible shapes
-                    if self.visible_layers.contains("LABEL")
-                        && self.zoom > 0.2
-                        && has_visible_shapes
-                    {
-                        if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
-                            let pin_center =
-                                egui::pos2((min_x + max_x) * 0.5, (min_y + max_y) * 0.5);
-                            texts_to_render.push((
-                                pin_center,
-                                pin.name.clone(),
-                                egui::FontId::monospace(12.0),
-                                egui::Color32::WHITE,
-                            ));
-                        }
-                    }
-                }
+                                            if line_length > 0.0 {
+                                                let dash_length = 3.0_f32;
+                                                let gap_length = 2.0_f32;
+                                                let pattern_length = dash_length + gap_length;
 
-                // Render obstructions
-                for obs in &macro_def.obs {
-                    // Render obstruction rectangles
-                    for rect_data in &obs.rects {
-                        let detailed_layer = format!("{}.OBS", rect_data.layer);
+                                                // Normalize direction
+                                                let dir_x = dx / line_length;
+                                                let dir_y = dy / line_length;
 
-                        if !self.visible_layers.contains(&detailed_layer) {
-                            continue;
-                        }
+                                                // Draw dashes along the line
+                                                let mut t = 0.0;
+                                                while t < line_length {
+                                                    let dash_end =
+                                                        (t + dash_length).min(line_length);
+                                                    let dash_start_pos = egui::pos2(
+                                                        start.x + dir_x * t,
+                                                        start.y + dir_y * t,
+                                                    );
+                                                    let dash_end_pos = egui::pos2(
+                                                        start.x + dir_x * dash_end,
+                                                        start.y + dir_y * dash_end,
+                                                    );
 
-                        // Check if this specific OBS layer is selected (if any OBS are selected)
-                        let obs_id = format!("{}::{}", macro_def.name, rect_data.layer);
-                        if !self.selected_lef_obs.is_empty()
-                            && !self.selected_lef_obs.contains(&obs_id)
-                        {
-                            continue;
-                        }
-
-                        // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
-                        // OBS coordinates are relative to ORIGIN, so add ORIGIN offset
-                        let obs_rect = egui::Rect::from_min_max(
-                            egui::pos2(
-                                outline_x
-                                    + ((macro_def.origin.0 + rect_data.xl) as f32 * self.zoom),
-                                outline_y
-                                    + ((macro_def.size_y - macro_def.origin.1 - rect_data.yh)
-                                        as f32
-                                        * self.zoom),
-                            ),
-                            egui::pos2(
-                                outline_x
-                                    + ((macro_def.origin.0 + rect_data.xh) as f32 * self.zoom),
-                                outline_y
-                                    + ((macro_def.size_y - macro_def.origin.1 - rect_data.yl)
-                                        as f32
-                                        * self.zoom),
-                            ),
-                        );
-                        let color = self.get_layer_color(&detailed_layer);
-                        // Render OBS as dashed outline instead of filled rectangle
-                        let stroke = egui::Stroke::new(1.0, color);
-                        painter.rect_stroke(obs_rect, 0.0, stroke, egui::StrokeKind::Middle);
-
-                        // Add dashed pattern by drawing additional lines
-                        let dash_length = 3.0;
-                        let gap_length = 2.0;
-                        let pattern_length = dash_length + gap_length;
-
-                        // Top edge dashes
-                        let mut x = obs_rect.min.x;
-                        while x < obs_rect.max.x {
-                            let end_x = (x + dash_length).min(obs_rect.max.x);
-                            painter.line_segment(
-                                [
-                                    egui::pos2(x, obs_rect.min.y),
-                                    egui::pos2(end_x, obs_rect.min.y),
-                                ],
-                                stroke,
-                            );
-                            x += pattern_length;
-                        }
-
-                        // Bottom edge dashes
-                        let mut x = obs_rect.min.x;
-                        while x < obs_rect.max.x {
-                            let end_x = (x + dash_length).min(obs_rect.max.x);
-                            painter.line_segment(
-                                [
-                                    egui::pos2(x, obs_rect.max.y),
-                                    egui::pos2(end_x, obs_rect.max.y),
-                                ],
-                                stroke,
-                            );
-                            x += pattern_length;
-                        }
-
-                        // Left edge dashes
-                        let mut y = obs_rect.min.y;
-                        while y < obs_rect.max.y {
-                            let end_y = (y + dash_length).min(obs_rect.max.y);
-                            painter.line_segment(
-                                [
-                                    egui::pos2(obs_rect.min.x, y),
-                                    egui::pos2(obs_rect.min.x, end_y),
-                                ],
-                                stroke,
-                            );
-                            y += pattern_length;
-                        }
-
-                        // Right edge dashes
-                        let mut y = obs_rect.min.y;
-                        while y < obs_rect.max.y {
-                            let end_y = (y + dash_length).min(obs_rect.max.y);
-                            painter.line_segment(
-                                [
-                                    egui::pos2(obs_rect.max.x, y),
-                                    egui::pos2(obs_rect.max.x, end_y),
-                                ],
-                                stroke,
-                            );
-                            y += pattern_length;
-                        }
-                    }
-
-                    // Group obstruction polygons by layer to avoid z-fighting
-                    let mut obs_layer_polygons: std::collections::HashMap<
-                        String,
-                        Vec<&crate::lef::LefPolygon>,
-                    > = std::collections::HashMap::new();
-                    for polygon_data in &obs.polygons {
-                        let detailed_layer = format!("{}.OBS", polygon_data.layer);
-                        if !self.visible_layers.contains(&detailed_layer) {
-                            continue;
-                        }
-
-                        // Check if this specific OBS layer is selected (if any OBS are selected)
-                        let obs_id = format!("{}::{}", macro_def.name, polygon_data.layer);
-                        if !self.selected_lef_obs.is_empty()
-                            && !self.selected_lef_obs.contains(&obs_id)
-                        {
-                            continue;
-                        }
-
-                        obs_layer_polygons
-                            .entry(detailed_layer.clone())
-                            .or_default()
-                            .push(polygon_data);
-                    }
-
-                    // Sort obstruction layers by z-order to prevent flickering
-                    let mut sorted_obs_layers: Vec<_> = obs_layer_polygons.into_iter().collect();
-                    sorted_obs_layers
-                        .sort_by_key(|(layer_name, _)| self.get_layer_order(layer_name));
-
-                    // Render obstruction polygons by layer
-                    for (layer_name, polygons) in sorted_obs_layers {
-                        let color = self.get_layer_color(&layer_name);
-
-                        // Draw each OBS polygon independently (LEF only has positive shapes)
-                        for polygon_data in &polygons {
-                            if polygon_data.points.len() >= 3 {
-                                // Convert LEF coordinates to screen coordinates
-                                // LEF uses bottom-up Y (Y=0 at bottom), screen uses top-down Y (Y=0 at top)
-                                // OBS coordinates are relative to ORIGIN, so add ORIGIN offset
-                                let mut screen_points: Vec<egui::Pos2> = polygon_data
-                                    .points
-                                    .iter()
-                                    .map(|(x, y)| {
-                                        egui::pos2(
-                                            outline_x
-                                                + ((macro_def.origin.0 + *x) as f32 * self.zoom),
-                                            outline_y
-                                                + ((macro_def.size_y - macro_def.origin.1 - *y)
-                                                    as f32
-                                                    * self.zoom),
-                                        )
-                                    })
-                                    .collect();
-
-                                if screen_points.len() >= 3 {
-                                    // Explicitly close the polygon by adding the first point at the end
-                                    let first_point = screen_points[0];
-                                    screen_points.push(first_point);
-
-                                    // Draw dashed outline for OBS polygons
-                                    let stroke = egui::Stroke::new(1.0, color);
-
-                                    // Draw dashed lines between consecutive points
-                                    for i in 0..(screen_points.len() - 1) {
-                                        let start = screen_points[i];
-                                        let end = screen_points[i + 1];
-
-                                        // Calculate line direction and length
-                                        let dx = end.x - start.x;
-                                        let dy = end.y - start.y;
-                                        let line_length = (dx * dx + dy * dy).sqrt();
-
-                                        if line_length > 0.0 {
-                                            let dash_length = 3.0_f32;
-                                            let gap_length = 2.0_f32;
-                                            let pattern_length = dash_length + gap_length;
-
-                                            // Normalize direction
-                                            let dir_x = dx / line_length;
-                                            let dir_y = dy / line_length;
-
-                                            // Draw dashes along the line
-                                            let mut t = 0.0;
-                                            while t < line_length {
-                                                let dash_end = (t + dash_length).min(line_length);
-                                                let dash_start_pos = egui::pos2(
-                                                    start.x + dir_x * t,
-                                                    start.y + dir_y * t,
-                                                );
-                                                let dash_end_pos = egui::pos2(
-                                                    start.x + dir_x * dash_end,
-                                                    start.y + dir_y * dash_end,
-                                                );
-
-                                                painter.line_segment(
-                                                    [dash_start_pos, dash_end_pos],
-                                                    stroke,
-                                                );
-                                                t += pattern_length;
+                                                    painter.line_segment(
+                                                        [dash_start_pos, dash_end_pos],
+                                                        stroke,
+                                                    );
+                                                    t += pattern_length;
+                                                }
                                             }
                                         }
                                     }
@@ -2712,228 +2824,229 @@ impl LefDefViewer {
                             }
                         }
                     }
-                }
 
-                // Store text for later rendering (on top)
-                if self.zoom > 0.3 {
-                    texts_to_render.push((
-                        macro_rect.center(),
-                        macro_def.name.clone(),
-                        egui::FontId::default(),
-                        egui::Color32::WHITE,
-                    ));
-                }
-            }
-        }
-
-        if let Some(def) = &self.def_data {
-            // Draw die area outline (if enabled)
-            if self.show_diearea && !def.die_area_points.is_empty() {
-                if def.die_area_points.len() == 2 {
-                    // Handle 2-point rectangle: (x1,y1) (x2,y2) defines a rectangle
-                    let p1 = &def.die_area_points[0];
-                    let p2 = &def.die_area_points[1];
-
-                    // Convert to screen coordinates (keep Y axis consistent with multi-point)
-                    let screen_p1 = egui::pos2(
-                        center.x + self.pan_x + (p1.0 as f32 * self.zoom * 0.001),
-                        center.y + self.pan_y + (p1.1 as f32 * self.zoom * 0.001), // Same as components
-                    );
-                    let screen_p2 = egui::pos2(
-                        center.x + self.pan_x + (p2.0 as f32 * self.zoom * 0.001),
-                        center.y + self.pan_y + (p2.1 as f32 * self.zoom * 0.001), // Same as components
-                    );
-
-                    // Create rectangle from min/max of both points
-                    let rect = egui::Rect::from_two_pos(screen_p1, screen_p2);
-
-                    // Draw rectangle outline
-                    painter.rect_stroke(
-                        rect,
-                        0.0,
-                        egui::Stroke::new(3.0, egui::Color32::RED),
-                        egui::StrokeKind::Middle,
-                    );
-
-                    // Draw corner markers
-                    painter.circle_filled(screen_p1, 3.0, egui::Color32::RED);
-                    painter.circle_filled(screen_p2, 3.0, egui::Color32::RED);
-                } else {
-                    // Handle multi-point polygon: connect all points and close the polygon
-                    let mut screen_points: Vec<egui::Pos2> = Vec::new();
-
-                    // Convert all points to screen coordinates (same as components)
-                    for point in &def.die_area_points {
-                        let screen_point = egui::pos2(
-                            center.x + self.pan_x + (point.0 as f32 * self.zoom * 0.001),
-                            center.y + self.pan_y + (point.1 as f32 * self.zoom * 0.001), // Same as components
-                        );
-                        screen_points.push(screen_point);
-                    }
-
-                    // First draw a subtle fill
-                    if screen_points.len() >= 3 {
-                        painter.add(egui::epaint::Shape::convex_polygon(
-                            screen_points.clone(),
-                            egui::Color32::from_rgba_unmultiplied(255, 0, 0, 15), // Very light red fill
-                            egui::Stroke::NONE,
-                        ));
-                    }
-
-                    // Then draw thick outline lines between consecutive points
-                    for i in 0..screen_points.len() {
-                        let current = screen_points[i];
-                        let next = screen_points[(i + 1) % screen_points.len()];
-
-                        // Draw thick red outline
-                        painter.line_segment(
-                            [current, next],
-                            egui::Stroke::new(4.0, egui::Color32::from_rgb(255, 0, 0)), // Thick red line
-                        );
-                    }
-                }
-            }
-
-            // Draw components (if enabled and selected)
-            if self.show_components {
-                for component in &def.components {
-                    // Only draw if this component is selected (or all if none are selected)
-                    if !self.selected_components.is_empty()
-                        && !self.selected_components.contains(&component.name)
-                    {
-                        continue;
-                    }
-
-                    // Get component position from placement info
-                    let (comp_x, comp_y) = if let Some(ref placement) = component.placement {
-                        (
-                            center.x + self.pan_x + (placement.x as f32 * self.zoom * 0.001),
-                            center.y + self.pan_y + (placement.y as f32 * self.zoom * 0.001),
-                        )
-                    } else {
-                        // Default position if no placement info
-                        (center.x, center.y)
-                    };
-
-                    // Draw a small rectangle for each component
-                    let comp_size = 5.0 * self.zoom;
-                    let comp_rect = egui::Rect::from_center_size(
-                        egui::pos2(comp_x, comp_y),
-                        egui::vec2(comp_size.max(2.0), comp_size.max(2.0)),
-                    );
-
-                    // Use different colors based on selection
-                    let is_selected = self.selected_components.contains(&component.name);
-                    let fill_color = if is_selected {
-                        egui::Color32::from_rgb(0, 255, 150) // Brighter green for selected
-                    } else {
-                        egui::Color32::from_rgb(0, 200, 100) // Normal green
-                    };
-
-                    painter.rect_filled(comp_rect, 0.0, fill_color);
-                    painter.rect_stroke(
-                        comp_rect,
-                        0.0,
-                        egui::Stroke::new(1.0, egui::Color32::WHITE),
-                        egui::StrokeKind::Middle,
-                    );
-
-                    // Draw component name if zoom is high enough
-                    // Store component text for later rendering
-                    if self.zoom > 2.0 {
+                    // Store text for later rendering (on top)
+                    if self.zoom > 0.3 {
                         texts_to_render.push((
-                            egui::pos2(comp_x, comp_y - comp_size - 10.0),
-                            component.name.clone(),
-                            egui::FontId::monospace(8.0),
-                            egui::Color32::YELLOW,
-                        ));
-                    }
-                }
-            }
-
-            // Draw pins (if enabled and selected)
-            if self.show_pins {
-                for pin in &def.pins {
-                    // Only draw if this pin is selected (or all if none are selected)
-                    if !self.selected_pins.is_empty() && !self.selected_pins.contains(&pin.name) {
-                        continue;
-                    }
-
-                    let pin_x = center.x + self.pan_x + (pin.x as f32 * self.zoom * 0.001);
-                    let pin_y = center.y + self.pan_y + (pin.y as f32 * self.zoom * 0.001);
-
-                    // Draw a small circle for each pin
-                    let pin_radius = 3.0 * self.zoom;
-
-                    // Use different colors based on selection and pin type
-                    let is_selected = self.selected_pins.contains(&pin.name);
-                    let fill_color = if is_selected {
-                        egui::Color32::from_rgb(150, 150, 255) // Brighter blue for selected
-                    } else {
-                        match pin.direction.as_str() {
-                            "INPUT" => egui::Color32::from_rgb(100, 255, 100), // Green for input
-                            "OUTPUT" => egui::Color32::from_rgb(255, 100, 100), // Red for output
-                            "INOUT" => egui::Color32::from_rgb(255, 255, 100), // Yellow for bidirectional
-                            _ => egui::Color32::LIGHT_BLUE,                    // Default blue
-                        }
-                    };
-
-                    painter.circle_filled(
-                        egui::pos2(pin_x, pin_y),
-                        pin_radius.max(1.0),
-                        fill_color,
-                    );
-                    painter.circle_stroke(
-                        egui::pos2(pin_x, pin_y),
-                        pin_radius.max(1.0),
-                        egui::Stroke::new(1.0, egui::Color32::WHITE),
-                    );
-
-                    // Draw pin name with smart positioning if zoom is high enough
-                    if self.zoom > 1.0 {
-                        // Reduced threshold from 3.0 to 1.0
-                        let pin_screen_pos = egui::pos2(pin_x, pin_y);
-
-                        // Calculate edge proximity with 8% threshold
-                        let edge_proximity = Self::calculate_pin_edge_proximity(
-                            (pin.x as f32, pin.y as f32),
-                            &def.die_area_points,
-                            self.zoom,
-                            center,
-                            self.pan_x,
-                            self.pan_y,
-                            0.08, // 8% threshold ratio
-                        );
-
-                        // Calculate DIEAREA screen bounds for positioning calculation
-                        let screen_bounds: Vec<egui::Pos2> = def
-                            .die_area_points
-                            .iter()
-                            .map(|(x, y)| {
-                                egui::pos2(
-                                    center.x + self.pan_x + (*x as f32 * self.zoom * 0.001),
-                                    center.y + self.pan_y + (*y as f32 * self.zoom * 0.001),
-                                )
-                            })
-                            .collect();
-
-                        let text_positioning = Self::calculate_smart_text_position(
-                            pin_screen_pos,
-                            edge_proximity,
-                            &screen_bounds,
-                        );
-
-                        // Store smart text positioning info for later rendering
-                        smart_texts_to_render.push((
-                            text_positioning,
-                            pin.name.clone(),
-                            egui::FontId::monospace(14.0),
+                            macro_rect.center(),
+                            macro_def.name.clone(),
+                            egui::FontId::default(),
                             egui::Color32::WHITE,
                         ));
                     }
                 }
             }
-        }
+
+            if let Some(def) = &self.def_data {
+                // Draw die area outline (if enabled)
+                if self.show_diearea && !def.die_area_points.is_empty() {
+                    if def.die_area_points.len() == 2 {
+                        // Handle 2-point rectangle: (x1,y1) (x2,y2) defines a rectangle
+                        let p1 = &def.die_area_points[0];
+                        let p2 = &def.die_area_points[1];
+
+                        // Convert to screen coordinates (keep Y axis consistent with multi-point)
+                        let screen_p1 = egui::pos2(
+                            center.x + self.pan_x + (p1.0 as f32 * self.zoom * 0.001),
+                            center.y + self.pan_y + (p1.1 as f32 * self.zoom * 0.001), // Same as components
+                        );
+                        let screen_p2 = egui::pos2(
+                            center.x + self.pan_x + (p2.0 as f32 * self.zoom * 0.001),
+                            center.y + self.pan_y + (p2.1 as f32 * self.zoom * 0.001), // Same as components
+                        );
+
+                        // Create rectangle from min/max of both points
+                        let rect = egui::Rect::from_two_pos(screen_p1, screen_p2);
+
+                        // Draw rectangle outline
+                        painter.rect_stroke(
+                            rect,
+                            0.0,
+                            egui::Stroke::new(3.0, egui::Color32::RED),
+                            egui::StrokeKind::Middle,
+                        );
+
+                        // Draw corner markers
+                        painter.circle_filled(screen_p1, 3.0, egui::Color32::RED);
+                        painter.circle_filled(screen_p2, 3.0, egui::Color32::RED);
+                    } else {
+                        // Handle multi-point polygon: connect all points and close the polygon
+                        let mut screen_points: Vec<egui::Pos2> = Vec::new();
+
+                        // Convert all points to screen coordinates (same as components)
+                        for point in &def.die_area_points {
+                            let screen_point = egui::pos2(
+                                center.x + self.pan_x + (point.0 as f32 * self.zoom * 0.001),
+                                center.y + self.pan_y + (point.1 as f32 * self.zoom * 0.001), // Same as components
+                            );
+                            screen_points.push(screen_point);
+                        }
+
+                        // First draw a subtle fill
+                        if screen_points.len() >= 3 {
+                            painter.add(egui::epaint::Shape::convex_polygon(
+                                screen_points.clone(),
+                                egui::Color32::from_rgba_unmultiplied(255, 0, 0, 15), // Very light red fill
+                                egui::Stroke::NONE,
+                            ));
+                        }
+
+                        // Then draw thick outline lines between consecutive points
+                        for i in 0..screen_points.len() {
+                            let current = screen_points[i];
+                            let next = screen_points[(i + 1) % screen_points.len()];
+
+                            // Draw thick red outline
+                            painter.line_segment(
+                                [current, next],
+                                egui::Stroke::new(4.0, egui::Color32::from_rgb(255, 0, 0)), // Thick red line
+                            );
+                        }
+                    }
+                }
+
+                // Draw components (if enabled and selected)
+                if self.show_components {
+                    for component in &def.components {
+                        // Only draw if this component is selected (or all if none are selected)
+                        if !self.selected_components.is_empty()
+                            && !self.selected_components.contains(&component.name)
+                        {
+                            continue;
+                        }
+
+                        // Get component position from placement info
+                        let (comp_x, comp_y) = if let Some(ref placement) = component.placement {
+                            (
+                                center.x + self.pan_x + (placement.x as f32 * self.zoom * 0.001),
+                                center.y + self.pan_y + (placement.y as f32 * self.zoom * 0.001),
+                            )
+                        } else {
+                            // Default position if no placement info
+                            (center.x, center.y)
+                        };
+
+                        // Draw a small rectangle for each component
+                        let comp_size = 5.0 * self.zoom;
+                        let comp_rect = egui::Rect::from_center_size(
+                            egui::pos2(comp_x, comp_y),
+                            egui::vec2(comp_size.max(2.0), comp_size.max(2.0)),
+                        );
+
+                        // Use different colors based on selection
+                        let is_selected = self.selected_components.contains(&component.name);
+                        let fill_color = if is_selected {
+                            egui::Color32::from_rgb(0, 255, 150) // Brighter green for selected
+                        } else {
+                            egui::Color32::from_rgb(0, 200, 100) // Normal green
+                        };
+
+                        painter.rect_filled(comp_rect, 0.0, fill_color);
+                        painter.rect_stroke(
+                            comp_rect,
+                            0.0,
+                            egui::Stroke::new(1.0, egui::Color32::WHITE),
+                            egui::StrokeKind::Middle,
+                        );
+
+                        // Draw component name if zoom is high enough
+                        // Store component text for later rendering
+                        if self.zoom > 2.0 {
+                            texts_to_render.push((
+                                egui::pos2(comp_x, comp_y - comp_size - 10.0),
+                                component.name.clone(),
+                                egui::FontId::monospace(8.0),
+                                egui::Color32::YELLOW,
+                            ));
+                        }
+                    }
+                }
+
+                // Draw pins (if enabled and selected)
+                if self.show_pins {
+                    for pin in &def.pins {
+                        // Only draw if this pin is selected (or all if none are selected)
+                        if !self.selected_pins.is_empty() && !self.selected_pins.contains(&pin.name)
+                        {
+                            continue;
+                        }
+
+                        let pin_x = center.x + self.pan_x + (pin.x as f32 * self.zoom * 0.001);
+                        let pin_y = center.y + self.pan_y + (pin.y as f32 * self.zoom * 0.001);
+
+                        // Draw a small circle for each pin
+                        let pin_radius = 3.0 * self.zoom;
+
+                        // Use different colors based on selection and pin type
+                        let is_selected = self.selected_pins.contains(&pin.name);
+                        let fill_color = if is_selected {
+                            egui::Color32::from_rgb(150, 150, 255) // Brighter blue for selected
+                        } else {
+                            match pin.direction.as_str() {
+                                "INPUT" => egui::Color32::from_rgb(100, 255, 100), // Green for input
+                                "OUTPUT" => egui::Color32::from_rgb(255, 100, 100), // Red for output
+                                "INOUT" => egui::Color32::from_rgb(255, 255, 100), // Yellow for bidirectional
+                                _ => egui::Color32::LIGHT_BLUE,                    // Default blue
+                            }
+                        };
+
+                        painter.circle_filled(
+                            egui::pos2(pin_x, pin_y),
+                            pin_radius.max(1.0),
+                            fill_color,
+                        );
+                        painter.circle_stroke(
+                            egui::pos2(pin_x, pin_y),
+                            pin_radius.max(1.0),
+                            egui::Stroke::new(1.0, egui::Color32::WHITE),
+                        );
+
+                        // Draw pin name with smart positioning if zoom is high enough
+                        if self.zoom > 1.0 {
+                            // Reduced threshold from 3.0 to 1.0
+                            let pin_screen_pos = egui::pos2(pin_x, pin_y);
+
+                            // Calculate edge proximity with 8% threshold
+                            let edge_proximity = Self::calculate_pin_edge_proximity(
+                                (pin.x as f32, pin.y as f32),
+                                &def.die_area_points,
+                                self.zoom,
+                                center,
+                                self.pan_x,
+                                self.pan_y,
+                                0.08, // 8% threshold ratio
+                            );
+
+                            // Calculate DIEAREA screen bounds for positioning calculation
+                            let screen_bounds: Vec<egui::Pos2> = def
+                                .die_area_points
+                                .iter()
+                                .map(|(x, y)| {
+                                    egui::pos2(
+                                        center.x + self.pan_x + (*x as f32 * self.zoom * 0.001),
+                                        center.y + self.pan_y + (*y as f32 * self.zoom * 0.001),
+                                    )
+                                })
+                                .collect();
+
+                            let text_positioning = Self::calculate_smart_text_position(
+                                pin_screen_pos,
+                                edge_proximity,
+                                &screen_bounds,
+                            );
+
+                            // Store smart text positioning info for later rendering
+                            smart_texts_to_render.push((
+                                text_positioning,
+                                pin.name.clone(),
+                                egui::FontId::monospace(14.0),
+                                egui::Color32::WHITE,
+                            ));
+                        }
+                    }
+                }
+            }
+        } // End of LEF mode else branch
 
         // Render all text on top of everything with outline for white text
         for (pos, text, font, color) in texts_to_render {
