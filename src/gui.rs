@@ -1401,7 +1401,72 @@ impl LefDefViewer {
         let mut max_y = f32::NEG_INFINITY;
         let mut found_any = false;
 
-        // Only consider visible OUTLINE layers from selected macros
+        // In DEF mode, calculate bounds from actual component placements
+        if self.def_mode {
+            if let Some(def) = &self.def_data {
+                let db_units = 1000.0;
+
+                // Iterate through all components and calculate their bounding boxes
+                for component in &def.components {
+                    // Get component placement
+                    if let Some(ref placement) = component.placement {
+                        let px = (placement.x / db_units) as f32;
+                        let py = (placement.y / db_units) as f32;
+
+                        // Find the LEF macro for this component
+                        let mut macro_size_x = 5.0; // Default size if macro not found
+                        let mut macro_size_y = 5.0;
+
+                        for lef_file in &self.lef_files {
+                            if let Some(macro_def) = lef_file
+                                .data
+                                .macros
+                                .iter()
+                                .find(|m| m.name == component.macro_name)
+                            {
+                                macro_size_x = macro_def.size_x as f32;
+                                macro_size_y = macro_def.size_y as f32;
+                                break;
+                            }
+                        }
+
+                        // Calculate component bounding box based on orientation
+                        // For simplicity, use axis-aligned bounding box
+                        let orientation = &placement.orientation;
+                        let (width, height) = match orientation.as_str() {
+                            "N" | "S" | "FN" | "FS" => (macro_size_x, macro_size_y),
+                            "E" | "W" | "FE" | "FW" => (macro_size_y, macro_size_x), // Rotated 90/270
+                            _ => (macro_size_x, macro_size_y),
+                        };
+
+                        // Component bounding box
+                        let comp_min_x = px;
+                        let comp_min_y = py;
+                        let comp_max_x = px + width;
+                        let comp_max_y = py + height;
+
+                        min_x = min_x.min(comp_min_x);
+                        min_y = min_y.min(comp_min_y);
+                        max_x = max_x.max(comp_max_x);
+                        max_y = max_y.max(comp_max_y);
+                        found_any = true;
+                    }
+                }
+
+                if found_any && max_x > min_x && max_y > min_y {
+                    log::info!(
+                        "DEF mode: Using component bounds ({}, {}) to ({}, {})",
+                        min_x,
+                        min_y,
+                        max_x,
+                        max_y
+                    );
+                    return Some((min_x, min_y, max_x, max_y));
+                }
+            }
+        }
+
+        // In LEF mode, use OUTLINE layers from selected macros
         // Iterate through all loaded LEF files
         for lef_file in &self.lef_files {
             for macro_def in &lef_file.data.macros {
@@ -1423,21 +1488,6 @@ impl LefDefViewer {
                     min_y = min_y.min(bottom);
                     max_x = max_x.max(right);
                     max_y = max_y.max(top);
-                    found_any = true;
-                }
-            }
-        }
-
-        // Also consider DEF die area if no LEF macros or OUTLINE not visible
-        if !found_any {
-            if let Some(def) = &self.def_data {
-                for point in &def.die_area_points {
-                    let x = point.0 as f32 * 0.001; // Scale from microns
-                    let y = point.1 as f32 * 0.001;
-                    min_x = min_x.min(x);
-                    min_y = min_y.min(y);
-                    max_x = max_x.max(x);
-                    max_y = max_y.max(y);
                     found_any = true;
                 }
             }
@@ -1471,9 +1521,36 @@ impl LefDefViewer {
                 let center_y = (min_y + max_y) * 0.5;
 
                 // Reset pan to center the content in the available space
-                // Corrected formula: pan = -world_center * zoom
                 self.pan_x = -center_x * self.zoom;
-                self.pan_y = -center_y * self.zoom;
+
+                // In DEF mode, rendering uses Y-flip: screen_y = center.y + pan_y + (die_area_max_y - world_y) * zoom
+                // To center at center_y: pan_y = -(die_area_max_y - center_y) * zoom
+                if self.def_mode {
+                    // Get die_area_max_y for Y-flip calculation
+                    if let Some(def) = &self.def_data {
+                        let db_units = 1000.0;
+                        let die_area_max_y = if !def.die_area_points.is_empty() {
+                            def.die_area_points
+                                .iter()
+                                .map(|p| (p.1 / db_units) as f32)
+                                .fold(f32::NEG_INFINITY, f32::max)
+                        } else {
+                            0.0
+                        };
+                        self.pan_y = -(die_area_max_y - center_y) * self.zoom;
+                        log::info!(
+                            "DEF fit_to_view: die_area_max_y={}, center_y={}, pan_y={}",
+                            die_area_max_y,
+                            center_y,
+                            self.pan_y
+                        );
+                    } else {
+                        self.pan_y = -center_y * self.zoom;
+                    }
+                } else {
+                    // LEF mode: standard formula
+                    self.pan_y = -center_y * self.zoom;
+                }
             }
         }
     }
@@ -2276,13 +2353,16 @@ impl LefDefViewer {
                     self.fit_to_view_requested = true;
                 }
                 if ui.button("Reset View").clicked() {
-                    self.zoom = 1.0;
-                    self.pan_x = 0.0;
-                    self.pan_y = 0.0;
+                    // In both modes, reset by fitting to view
+                    self.fit_to_view_requested = true;
                 }
             });
 
-            ui.label("TIP: Fit to View uses OUTLINE layers only");
+            if self.def_mode {
+                ui.label("TIP: Fit to View uses DEF die area");
+            } else {
+                ui.label("TIP: Fit to View uses OUTLINE layers only");
+            }
 
             ui.separator();
 
