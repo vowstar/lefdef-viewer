@@ -105,6 +105,8 @@ pub struct LefDefViewer {
     loading_receiver: Option<mpsc::Receiver<LoadingMessage>>,
     // Macro search/filter
     macro_filter: String,
+    // Animation timestamp for blink effect
+    start_time: std::time::Instant,
 }
 
 impl LefDefViewer {
@@ -172,6 +174,8 @@ impl LefDefViewer {
             loading_receiver: None,
             // Macro search/filter
             macro_filter: String::new(),
+            // Animation timestamp for blink effect
+            start_time: std::time::Instant::now(),
         }
     }
 
@@ -516,11 +520,18 @@ impl LefDefViewer {
         // Convert to LEF units by dividing by 1000
         let db_units = 1000.0;
 
+        // Calculate blink effect (1 Hz = 1 second period)
+        let elapsed = self.start_time.elapsed().as_secs_f32();
+        let blink_on = (elapsed % 1.0) < 0.5; // On for 0.5s, off for 0.5s
+
         // Iterate through all components in DEF
         for component in &def.components {
             // Check if we have a matching LEF macro
             if self.missing_cells.contains(&component.macro_name) {
-                // Skip missing cells for now (could render placeholder in future)
+                // Render placeholder for missing cell with blink effect
+                self.render_missing_cell_placeholder(
+                    painter, center, component, db_units, blink_on,
+                );
                 continue;
             }
 
@@ -578,49 +589,29 @@ impl LefDefViewer {
                 );
             }
 
-            // Render component name if enabled
+            // Render component name if enabled (no rotation, white text with black outline)
             if self.show_component_text {
                 // Transform center point to world coordinates with orientation
-                let (transformed_cx, transformed_cy) =
-                    self.transform_point((macro_size.0 / 2.0, macro_size.1 / 2.0), (px, py), orientation, macro_size);
+                let (transformed_cx, transformed_cy) = self.transform_point(
+                    (macro_size.0 / 2.0, macro_size.1 / 2.0),
+                    (px, py),
+                    orientation,
+                    macro_size,
+                );
 
                 // Convert to screen coordinates
                 let screen_cx = center.x + self.pan_x + (transformed_cx as f32 * self.zoom);
                 let screen_cy = center.y + self.pan_y + (transformed_cy as f32 * self.zoom);
 
-                // Calculate rotation angle based on orientation (in radians)
-                let angle_rad = match orientation {
-                    "N" => 0.0,
-                    "S" => std::f32::consts::PI,          // 180 degrees
-                    "E" => std::f32::consts::PI / 2.0,     // 90 degrees CCW
-                    "W" => -std::f32::consts::PI / 2.0,    // 90 degrees CW
-                    "FN" => 0.0,                           // Flipped, no rotation
-                    "FS" => std::f32::consts::PI,          // Flipped + 180
-                    "FE" => std::f32::consts::PI / 2.0,    // Flipped + 90 CCW
-                    "FW" => -std::f32::consts::PI / 2.0,   // Flipped + 90 CW
-                    _ => 0.0,
-                };
-
-                // Create text shape with rotation using the same approach as pin text
-                let text_pos = egui::pos2(screen_cx, screen_cy);
-                let font_id = egui::FontId::proportional(12.0);
-                let mut text_shape = egui::Shape::text(
-                    &painter.fonts(|f| f.clone()),
-                    text_pos,
+                // Render text with white text and black outline, no rotation
+                self.render_text_with_outline(
+                    painter,
+                    egui::pos2(screen_cx, screen_cy),
                     egui::Align2::CENTER_CENTER,
                     &component.name,
-                    font_id,
-                    egui::Color32::YELLOW,
+                    egui::FontId::proportional(12.0),
+                    egui::Color32::WHITE,
                 );
-
-                // Apply rotation to text shape
-                if angle_rad != 0.0 {
-                    if let egui::Shape::Text(text_shape_inner) = &mut text_shape {
-                        text_shape_inner.angle = angle_rad;
-                    }
-                }
-
-                painter.add(text_shape);
             }
 
             // Render LEF cell internal details (PINs, OBS) if enabled
@@ -637,16 +628,33 @@ impl LefDefViewer {
 
                             // Transform rectangle corners
                             let corners = [
-                                (macro_def.origin.0 + rect_data.xl, macro_def.origin.1 + rect_data.yl),
-                                (macro_def.origin.0 + rect_data.xh, macro_def.origin.1 + rect_data.yl),
-                                (macro_def.origin.0 + rect_data.xh, macro_def.origin.1 + rect_data.yh),
-                                (macro_def.origin.0 + rect_data.xl, macro_def.origin.1 + rect_data.yh),
+                                (
+                                    macro_def.origin.0 + rect_data.xl,
+                                    macro_def.origin.1 + rect_data.yl,
+                                ),
+                                (
+                                    macro_def.origin.0 + rect_data.xh,
+                                    macro_def.origin.1 + rect_data.yl,
+                                ),
+                                (
+                                    macro_def.origin.0 + rect_data.xh,
+                                    macro_def.origin.1 + rect_data.yh,
+                                ),
+                                (
+                                    macro_def.origin.0 + rect_data.xl,
+                                    macro_def.origin.1 + rect_data.yh,
+                                ),
                             ];
 
                             let screen_points: Vec<egui::Pos2> = corners
                                 .iter()
                                 .map(|&corner| {
-                                    let (tx, ty) = self.transform_point(corner, (px, py), orientation, macro_size);
+                                    let (tx, ty) = self.transform_point(
+                                        corner,
+                                        (px, py),
+                                        orientation,
+                                        macro_size,
+                                    );
                                     egui::pos2(
                                         center.x + self.pan_x + (tx as f32 * self.zoom),
                                         center.y + self.pan_y + (ty as f32 * self.zoom),
@@ -705,16 +713,29 @@ impl LefDefViewer {
 
                         // Transform rectangle corners
                         let corners = [
-                            (macro_def.origin.0 + rect_data.xl, macro_def.origin.1 + rect_data.yl),
-                            (macro_def.origin.0 + rect_data.xh, macro_def.origin.1 + rect_data.yl),
-                            (macro_def.origin.0 + rect_data.xh, macro_def.origin.1 + rect_data.yh),
-                            (macro_def.origin.0 + rect_data.xl, macro_def.origin.1 + rect_data.yh),
+                            (
+                                macro_def.origin.0 + rect_data.xl,
+                                macro_def.origin.1 + rect_data.yl,
+                            ),
+                            (
+                                macro_def.origin.0 + rect_data.xh,
+                                macro_def.origin.1 + rect_data.yl,
+                            ),
+                            (
+                                macro_def.origin.0 + rect_data.xh,
+                                macro_def.origin.1 + rect_data.yh,
+                            ),
+                            (
+                                macro_def.origin.0 + rect_data.xl,
+                                macro_def.origin.1 + rect_data.yh,
+                            ),
                         ];
 
                         let screen_points: Vec<egui::Pos2> = corners
                             .iter()
                             .map(|&corner| {
-                                let (tx, ty) = self.transform_point(corner, (px, py), orientation, macro_size);
+                                let (tx, ty) =
+                                    self.transform_point(corner, (px, py), orientation, macro_size);
                                 egui::pos2(
                                     center.x + self.pan_x + (tx as f32 * self.zoom),
                                     center.y + self.pan_y + (ty as f32 * self.zoom),
@@ -768,6 +789,100 @@ impl LefDefViewer {
                 }
             }
         }
+    }
+
+    /// Render placeholder for missing LEF cells (not found in loaded LEF files)
+    fn render_missing_cell_placeholder(
+        &self,
+        painter: &egui::Painter,
+        center: egui::Pos2,
+        component: &crate::def::DefComponent,
+        db_units: f64,
+        blink_on: bool,
+    ) {
+        // Get component placement
+        let (px, py, orientation) = if let Some(ref placement) = component.placement {
+            let px = placement.x / db_units;
+            let py = placement.y / db_units;
+            (px, py, placement.orientation.as_str())
+        } else {
+            return; // Skip if no placement
+        };
+
+        // Use default size for missing cells (5 microns x 5 microns)
+        let default_size = 5.0;
+        let macro_size = (default_size, default_size);
+
+        // Transform bounding box corners for the placeholder
+        let (min_x, min_y, max_x, max_y) = self.transform_bbox(macro_size, (px, py), orientation);
+
+        // Convert to screen coordinates
+        let screen_min_x = center.x + self.pan_x + (min_x as f32 * self.zoom);
+        let screen_min_y = center.y + self.pan_y + (min_y as f32 * self.zoom);
+        let screen_max_x = center.x + self.pan_x + (max_x as f32 * self.zoom);
+        let screen_max_y = center.y + self.pan_y + (max_y as f32 * self.zoom);
+
+        // Blink color: red when on, transparent when off
+        let outline_color = if blink_on {
+            egui::Color32::from_rgb(255, 0, 0) // Red
+        } else {
+            egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100) // Semi-transparent red
+        };
+
+        // Draw dashed rectangle outline
+        let rect = egui::Rect::from_min_max(
+            egui::pos2(screen_min_x, screen_min_y),
+            egui::pos2(screen_max_x, screen_max_y),
+        );
+
+        // Draw rectangle with dashed stroke
+        painter.rect_stroke(
+            rect,
+            0.0,
+            egui::Stroke::new(2.0, outline_color),
+            egui::StrokeKind::Middle,
+        );
+
+        // Draw X mark across the rectangle
+        painter.line_segment(
+            [
+                egui::pos2(screen_min_x, screen_min_y),
+                egui::pos2(screen_max_x, screen_max_y),
+            ],
+            egui::Stroke::new(2.0, outline_color),
+        );
+        painter.line_segment(
+            [
+                egui::pos2(screen_max_x, screen_min_y),
+                egui::pos2(screen_min_x, screen_max_y),
+            ],
+            egui::Stroke::new(2.0, outline_color),
+        );
+
+        // Display component name and macro name (no rotation, white text with black outline)
+        let center_x = (screen_min_x + screen_max_x) / 2.0;
+        let center_y = (screen_min_y + screen_max_y) / 2.0;
+
+        // Component name above center
+        self.render_text_with_outline(
+            painter,
+            egui::pos2(center_x, center_y - 10.0),
+            egui::Align2::CENTER_CENTER,
+            &component.name,
+            egui::FontId::proportional(10.0),
+            egui::Color32::WHITE,
+        );
+
+        // Macro name (missing) below center
+        let text2 = format!("({})", component.macro_name);
+        self.render_text_with_outline(
+            painter,
+            egui::pos2(center_x, center_y + 10.0),
+            egui::Align2::CENTER_CENTER,
+            &text2,
+            egui::FontId::proportional(8.0),
+            egui::Color32::WHITE,
+        );
     }
 
     fn render_text_with_outline(
