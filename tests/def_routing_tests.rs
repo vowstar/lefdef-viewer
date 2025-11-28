@@ -344,3 +344,187 @@ END DESIGN
     // Verify NETS
     assert_eq!(def.nets[0].name, "clk");
 }
+
+#[test]
+fn test_nets_routing_layer_parsing() {
+    let def_content = r#"
+VERSION 5.8 ;
+DESIGN test ;
+
+NETS 3 ;
+- net1 ( INST1 A ) ( INST2 B )
+  + ROUTED metal2 ( 1000 2000 ) ( 1500 2000 ) ( 1500 2500 ) ;
+- net2 ( INST3 C ) ( INST4 D )
+  + ROUTED metal3 ( 2000 3000 ) ( 2500 3000 )
+    NEW metal4 ( 2500 3000 ) ( 2500 3500 ) ;
+- net3 ( INST5 E ) ( INST6 F )
+  + ROUTED metal1 ( 500 1000 ) ( 1000 1000 ) via1_4
+    NEW metal2 ( 1000 1000 ) ( 1000 1500 ) ;
+END NETS
+
+END DESIGN
+"#;
+
+    let result = def_parser::parse_def(def_content);
+    assert!(result.is_ok(), "Failed to parse NETS routing: {:?}", result);
+
+    let (_, def) = result.unwrap();
+    assert_eq!(def.nets.len(), 3);
+
+    // Check net1: single metal2 route
+    let net1 = &def.nets[0];
+    assert_eq!(net1.name, "net1");
+    assert_eq!(net1.routes.len(), 1);
+    assert_eq!(net1.routes[0].layer, "metal2");
+    assert_eq!(net1.routes[0].points.len(), 3);
+    assert_eq!(net1.routes[0].routing_type, "ROUTED");
+
+    // Check net2: metal3 + metal4
+    let net2 = &def.nets[1];
+    assert_eq!(net2.name, "net2");
+    assert_eq!(net2.routes.len(), 2);
+    assert_eq!(net2.routes[0].layer, "metal3");
+    assert_eq!(net2.routes[0].points.len(), 2);
+    assert_eq!(net2.routes[1].layer, "metal4");
+    assert_eq!(net2.routes[1].points.len(), 2);
+    assert_eq!(net2.routes[1].routing_type, "NEW");
+
+    // Check net3: metal1 + metal2 with via
+    let net3 = &def.nets[2];
+    assert_eq!(net3.name, "net3");
+    assert_eq!(net3.routes.len(), 2);
+    assert_eq!(net3.routes[0].layer, "metal1");
+    assert_eq!(net3.routes[0].points.len(), 2);
+    assert_eq!(net3.routes[1].layer, "metal2");
+    assert_eq!(net3.routes[1].points.len(), 2);
+}
+
+#[test]
+fn test_specialnets_routing_layer_parsing() {
+    let def_content = r#"
+VERSION 5.8 ;
+DESIGN test ;
+
+SPECIALNETS 2 ;
+- VDD ( * VDD )
+  + USE POWER
+  + ROUTED metal1 170 ( 0 0 ) ( 1000 0 )
+    NEW metal2 200 ( 1000 0 ) ( 1000 1000 )
+    NEW metal8 1000 + SHAPE STRIPE ( 500 0 ) ( 500 5000 ) ;
+- VSS ( * VSS )
+  + USE GROUND
+  + ROUTED metal1 170 ( 0 1400 ) ( 1000 1400 )
+    NEW metal3 250 ( 1000 1400 ) ( 2000 1400 ) ;
+END SPECIALNETS
+
+END DESIGN
+"#;
+
+    let result = def_parser::parse_def(def_content);
+    assert!(
+        result.is_ok(),
+        "Failed to parse SPECIALNETS routing: {:?}",
+        result
+    );
+
+    let (_, def) = result.unwrap();
+    assert_eq!(def.special_nets.len(), 2);
+
+    // Check VDD: metal1 + metal2 + metal8
+    let vdd = &def.special_nets[0];
+    assert_eq!(vdd.name, "VDD");
+    assert_eq!(vdd.use_type, Some("POWER".to_string()));
+    assert_eq!(vdd.routes.len(), 3);
+
+    assert_eq!(vdd.routes[0].layer, "metal1");
+    assert_eq!(vdd.routes[0].width, 170.0);
+    assert_eq!(vdd.routes[0].points.len(), 2);
+
+    assert_eq!(vdd.routes[1].layer, "metal2");
+    assert_eq!(vdd.routes[1].width, 200.0);
+    assert_eq!(vdd.routes[1].points.len(), 2);
+
+    assert_eq!(vdd.routes[2].layer, "metal8");
+    assert_eq!(vdd.routes[2].width, 1000.0);
+    assert_eq!(vdd.routes[2].shape, Some("STRIPE".to_string()));
+    assert_eq!(vdd.routes[2].points.len(), 2);
+
+    // Check VSS: metal1 + metal3
+    let vss = &def.special_nets[1];
+    assert_eq!(vss.name, "VSS");
+    assert_eq!(vss.use_type, Some("GROUND".to_string()));
+    assert_eq!(vss.routes.len(), 2);
+
+    assert_eq!(vss.routes[0].layer, "metal1");
+    assert_eq!(vss.routes[0].width, 170.0);
+
+    assert_eq!(vss.routes[1].layer, "metal3");
+    assert_eq!(vss.routes[1].width, 250.0);
+}
+
+#[test]
+fn test_nets_wildcard_coordinates() {
+    let def_content = r#"
+VERSION 5.8 ;
+DIVIDERCHAR "/" ;
+BUSBITCHARS "[]" ;
+DESIGN test_wildcard ;
+UNITS DISTANCE MICRONS 1000 ;
+
+DIEAREA ( 0 0 ) ( 10000 10000 ) ;
+
+NETS 2 ;
+- net1 ( INST1 A ) ( INST2 B )
+  + ROUTED metal2 ( 1000 2000 ) ( * 3000 ) ( 1500 * ) ;
+- net2 ( INST3 C ) ( INST4 D )
+  + ROUTED metal3 ( 500 1000 ) ( * 2000 )
+    NEW metal4 ( 1000 * ) ( 1500 2500 ) ;
+END NETS
+
+END DESIGN
+"#;
+
+    let (_, def) = def_parser::parse_def(def_content).unwrap();
+
+    assert_eq!(def.nets.len(), 2);
+
+    // Test net1: single route with wildcard coordinates
+    let net1 = &def.nets[0];
+    assert_eq!(net1.name, "net1");
+    assert_eq!(net1.routes.len(), 1);
+    assert_eq!(net1.routes[0].layer, "metal2");
+    assert_eq!(net1.routes[0].points.len(), 3);
+    // First point: explicit (1000, 2000)
+    assert_eq!(net1.routes[0].points[0].x, 1000.0);
+    assert_eq!(net1.routes[0].points[0].y, 2000.0);
+    // Second point: wildcard x=*, explicit y=3000 -> (1000, 3000)
+    assert_eq!(net1.routes[0].points[1].x, 1000.0);
+    assert_eq!(net1.routes[0].points[1].y, 3000.0);
+    // Third point: explicit x=1500, wildcard y=* -> (1500, 3000)
+    assert_eq!(net1.routes[0].points[2].x, 1500.0);
+    assert_eq!(net1.routes[0].points[2].y, 3000.0);
+
+    // Test net2: multi-segment route with wildcard in NEW segment
+    let net2 = &def.nets[1];
+    assert_eq!(net2.name, "net2");
+    assert_eq!(net2.routes.len(), 2);
+
+    // First segment: metal3
+    assert_eq!(net2.routes[0].layer, "metal3");
+    assert_eq!(net2.routes[0].points.len(), 2);
+    assert_eq!(net2.routes[0].points[0].x, 500.0);
+    assert_eq!(net2.routes[0].points[0].y, 1000.0);
+    assert_eq!(net2.routes[0].points[1].x, 500.0);
+    assert_eq!(net2.routes[0].points[1].y, 2000.0);
+
+    // Second segment: metal4 (NEW continues from previous segment)
+    assert_eq!(net2.routes[1].layer, "metal4");
+    assert_eq!(net2.routes[1].routing_type, "NEW");
+    assert_eq!(net2.routes[1].points.len(), 2);
+    // First point of NEW: explicit x=1000, wildcard y=* inherits from previous segment (2000)
+    assert_eq!(net2.routes[1].points[0].x, 1000.0);
+    assert_eq!(net2.routes[1].points[0].y, 2000.0);
+    // Second point: explicit (1500, 2500)
+    assert_eq!(net2.routes[1].points[1].x, 1500.0);
+    assert_eq!(net2.routes[1].points[1].y, 2500.0);
+}

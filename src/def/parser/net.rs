@@ -208,64 +208,97 @@ impl DefNetParser {
     }
 
     /// Parse routing information from a line
+    /// Format: ROUTED layer ( x y ) ( x y ) vianame
+    ///         NEW layer ( x y ) ( x y )
+    /// Supports wildcard coordinates: ( * y ) or ( x * )
     fn parse_routing_in_line(&self, context: &mut NetContext, line: &str) {
-        // Handle different routing types: NEW, ROUTED, FIXED, COVER, SHIELD
-        if let Some(shape) = self.extract_routing_shape(line) {
-            if let Some(layer) = extract_keyword_value(line, "LAYER") {
-                let points = self.extract_routing_points(line);
-                let width = self.extract_routing_width(line);
-                let via = extract_keyword_value(line, "VIA");
-
-                context.routing.push(NetRouting {
-                    layer,
-                    points,
-                    width,
-                    via,
-                    shape,
-                });
-            }
-        }
-    }
-
-    /// Extract routing shape (NEW, ROUTED, etc.)
-    fn extract_routing_shape(&self, line: &str) -> Option<String> {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        for part in parts {
-            match part {
-                "NEW" | "ROUTED" | "FIXED" | "COVER" | "SHIELD" | "NOSHIELD" => {
-                    return Some(part.to_string());
-                }
-                _ => continue,
-            }
-        }
-        None
-    }
-
-    /// Extract coordinate points from routing line
-    fn extract_routing_points(&self, line: &str) -> Vec<(f64, f64)> {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        let mut points = Vec::new();
         let mut i = 0;
+        let mut last_x = 0.0;
+        let mut last_y = 0.0;
 
         while i < parts.len() {
-            if parts[i] == "(" && i + 3 < parts.len() && parts[i + 3] == ")" {
-                if let (Ok(x), Ok(y)) = (parts[i + 1].parse::<f64>(), parts[i + 2].parse::<f64>()) {
-                    points.push((x, y));
-                    i += 4; // Skip past coordinate pair
-                } else {
-                    i += 1;
+            match parts[i] {
+                "ROUTED" | "NEW" | "FIXED" | "COVER" => {
+                    if i + 1 < parts.len() {
+                        let routing_type = parts[i].to_string();
+                        let layer = parts[i + 1].to_string();
+
+                        // NETS typically don't have explicit width, use default
+                        let width = None; // Will default to minimal width in renderer
+
+                        // Collect points and vias for this route segment
+                        let mut points = Vec::new();
+                        let mut via = None;
+
+                        i += 2; // Skip routing_type and layer
+
+                        // Parse coordinates and vias until we hit next routing keyword
+                        while i < parts.len() {
+                            match parts[i] {
+                                "NEW" | "ROUTED" | "FIXED" | "COVER" | "+" => {
+                                    // Stop at next routing keyword
+                                    break;
+                                }
+                                "(" => {
+                                    // Parse coordinate: ( x y ) or ( x * ) or ( * y )
+                                    if i + 3 < parts.len() && parts[i + 3] == ")" {
+                                        let x_str = parts[i + 1];
+                                        let y_str = parts[i + 2];
+
+                                        // Handle wildcard coordinates (inherit from previous point)
+                                        let x = if x_str == "*" {
+                                            last_x
+                                        } else {
+                                            x_str.parse().unwrap_or(0.0)
+                                        };
+                                        let y = if y_str == "*" {
+                                            last_y
+                                        } else {
+                                            y_str.parse().unwrap_or(0.0)
+                                        };
+
+                                        points.push((x, y));
+                                        last_x = x;
+                                        last_y = y;
+
+                                        i += 4; // Skip ( x y )
+                                    } else {
+                                        i += 1;
+                                    }
+                                }
+                                _ => {
+                                    // Check if this is a via name (single word, not a number)
+                                    if !parts[i].contains('(')
+                                        && !parts[i].contains(')')
+                                        && parts[i].parse::<f64>().is_err()
+                                        && via.is_none()
+                                    {
+                                        // This looks like a via name
+                                        via = Some(parts[i].to_string());
+                                    }
+                                    i += 1;
+                                }
+                            }
+                        }
+
+                        // Only create route if we have points
+                        if !points.is_empty() {
+                            context.routing.push(NetRouting {
+                                layer,
+                                points,
+                                width,
+                                via,
+                                shape: routing_type,
+                            });
+                        }
+                    } else {
+                        i += 1;
+                    }
                 }
-            } else {
-                i += 1;
+                _ => i += 1,
             }
         }
-
-        points
-    }
-
-    /// Extract routing width
-    fn extract_routing_width(&self, line: &str) -> Option<f64> {
-        extract_keyword_value(line, "WIDTH").and_then(|w| w.parse().ok())
     }
 
     /// Parse attributes from any line (header or continuation)
@@ -354,31 +387,25 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_routing_points() {
+    fn test_parse_routing_with_wildcard_coordinates() {
         let parser = DefNetParser::new();
-        let points = parser.extract_routing_points("+ ROUTED METAL1 ( 100 200 ) ( 300 400 )");
+        let mut context = NetContext::new("testnet".to_string());
 
-        assert_eq!(points.len(), 2);
-        assert_eq!(points[0], (100.0, 200.0));
-        assert_eq!(points[1], (300.0, 400.0));
-    }
+        // Test wildcard coordinates: ( * y ) and ( x * )
+        parser.parse_routing_in_line(
+            &mut context,
+            "+ ROUTED metal2 ( 1000 2000 ) ( * 3000 ) ( 1500 * )",
+        );
 
-    #[test]
-    fn test_routing_shape_detection() {
-        let parser = DefNetParser::new();
-
-        assert_eq!(
-            parser.extract_routing_shape("+ NEW METAL1"),
-            Some("NEW".to_string())
-        );
-        assert_eq!(
-            parser.extract_routing_shape("+ ROUTED METAL2"),
-            Some("ROUTED".to_string())
-        );
-        assert_eq!(
-            parser.extract_routing_shape("+ FIXED"),
-            Some("FIXED".to_string())
-        );
+        assert_eq!(context.routing.len(), 1);
+        assert_eq!(context.routing[0].layer, "metal2");
+        assert_eq!(context.routing[0].points.len(), 3);
+        // First point: explicit coordinates
+        assert_eq!(context.routing[0].points[0], (1000.0, 2000.0));
+        // Second point: wildcard x inherits from previous (1000), y is explicit (3000)
+        assert_eq!(context.routing[0].points[1], (1000.0, 3000.0));
+        // Third point: x is explicit (1500), wildcard y inherits from previous (3000)
+        assert_eq!(context.routing[0].points[2], (1500.0, 3000.0));
     }
 
     #[test]

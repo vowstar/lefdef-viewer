@@ -140,6 +140,7 @@ pub struct LefDefViewer {
     show_components: bool,
     show_pins: bool,
     show_nets: bool,
+    show_special_nets: bool,
     show_diearea: bool,
     // Voltage configuration for Liberty export
     voltage_dialog: VoltageDialog,
@@ -215,6 +216,7 @@ impl LefDefViewer {
             show_components: true,
             show_pins: true,
             show_nets: true,
+            show_special_nets: true,
             show_diearea: true,
             // Voltage configuration for Liberty export
             voltage_dialog: VoltageDialog::new(),
@@ -1422,7 +1424,7 @@ impl LefDefViewer {
         }
 
         // Render SPECIALNETS (power/ground routing) if enabled
-        if self.show_nets {
+        if self.show_special_nets {
             for special_net in &def.special_nets {
                 // Determine color based on use type
                 let net_color = match special_net.use_type.as_deref() {
@@ -1504,6 +1506,104 @@ impl LefDefViewer {
                                 egui::pos2(screen_x + via_size, screen_y),
                                 via_name.clone(),
                                 egui::FontId::monospace(8.0),
+                                egui::Color32::WHITE,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Render NETS (signal routing) if enabled
+        if self.show_nets {
+            // Signal nets use green color with thinner lines
+            let net_color = egui::Color32::from_rgb(50, 200, 50);
+
+            for net in &def.nets {
+                // Skip if no routing information
+                if net.routes.is_empty() {
+                    continue;
+                }
+
+                // Render all routing segments
+                for route in &net.routes {
+                    // Check layer visibility
+                    let layer_key = format!("{}.ROUTE", route.layer);
+                    if !self.visible_layers.contains(&layer_key) {
+                        continue;
+                    }
+
+                    // Convert route width from DEF units to screen space
+                    // Signal nets typically use thinner lines than power nets
+                    // NETS often don't have explicit width, so use default if missing
+                    let line_width = if route.width > 0.0 {
+                        (route.width / db_units) as f32 * self.zoom
+                    } else {
+                        1.0 // Default width for signal nets
+                    };
+                    let min_width = 0.5; // Thinner minimum for signal nets
+                    let visual_width = line_width.max(min_width);
+
+                    // Render route points as connected line segments
+                    if route.points.len() >= 2 {
+                        for i in 0..route.points.len() - 1 {
+                            let p1 = &route.points[i];
+                            let p2 = &route.points[i + 1];
+
+                            // Convert to screen coordinates with Y-flip
+                            let x1 = (p1.x / db_units) as f32;
+                            let y1 = (p1.y / db_units) as f32;
+                            let x2 = (p2.x / db_units) as f32;
+                            let y2 = (p2.y / db_units) as f32;
+
+                            let screen_x1 = center.x + self.pan_x + (x1 * self.zoom);
+                            let screen_y1 =
+                                center.y + self.pan_y + ((die_area_max_y as f32 - y1) * self.zoom);
+                            let screen_x2 = center.x + self.pan_x + (x2 * self.zoom);
+                            let screen_y2 =
+                                center.y + self.pan_y + ((die_area_max_y as f32 - y2) * self.zoom);
+
+                            // Draw thin line for signal routing
+                            painter.line_segment(
+                                [
+                                    egui::pos2(screen_x1, screen_y1),
+                                    egui::pos2(screen_x2, screen_y2),
+                                ],
+                                egui::Stroke::new(visual_width, net_color),
+                            );
+                        }
+                    }
+
+                    // Render vias (less prominent than power vias)
+                    for (via_name, via_x, via_y) in &route.vias {
+                        let x = (*via_x / db_units) as f32;
+                        let y = (*via_y / db_units) as f32;
+
+                        let screen_x = center.x + self.pan_x + (x * self.zoom);
+                        let screen_y =
+                            center.y + self.pan_y + ((die_area_max_y as f32 - y) * self.zoom);
+
+                        // Draw via as small square (smaller than power vias)
+                        let via_size = (3.0 * self.zoom).max(1.5);
+                        let via_rect = egui::Rect::from_center_size(
+                            egui::pos2(screen_x, screen_y),
+                            egui::vec2(via_size, via_size),
+                        );
+
+                        painter.rect_filled(via_rect, 0.0, net_color);
+                        painter.rect_stroke(
+                            via_rect,
+                            0.0,
+                            egui::Stroke::new(0.5, egui::Color32::WHITE),
+                            egui::StrokeKind::Middle,
+                        );
+
+                        // Only draw via name at very high zoom
+                        if self.zoom > 10.0 {
+                            texts_to_render.push((
+                                egui::pos2(screen_x + via_size, screen_y),
+                                via_name.clone(),
+                                egui::FontId::monospace(6.0),
                                 egui::Color32::WHITE,
                             ));
                         }
@@ -3662,7 +3762,52 @@ impl LefDefViewer {
 
                 ui.separator();
 
-                // NETS section
+                // SPECIALNETS section (power/ground networks)
+                egui::CollapsingHeader::new(format!("SPECIALNETS ({})", def.special_nets.len()))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.show_special_nets, "Show Special Nets");
+                            ui.label(format!("Total: {}", def.special_nets.len()));
+                        });
+
+                        if !def.special_nets.is_empty() {
+                            ui.separator();
+                            ui.label("Power/Ground networks:");
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, true])
+                                .max_height(150.0)
+                                .show(ui, |ui| {
+                                    for snet in &def.special_nets {
+                                        let use_type = snet.use_type.as_deref().unwrap_or("UNKNOWN");
+                                        let route_count = snet.routes.len();
+                                        let color = match use_type {
+                                            "POWER" => egui::Color32::from_rgb(255, 50, 50),
+                                            "GROUND" => egui::Color32::from_rgb(50, 50, 255),
+                                            _ => egui::Color32::from_rgb(200, 200, 0),
+                                        };
+
+                                        ui.horizontal(|ui| {
+                                            // Color indicator
+                                            let (rect, _) = ui.allocate_exact_size(
+                                                egui::Vec2::splat(12.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            ui.painter().rect_filled(rect, 2.0, color);
+
+                                            ui.label(format!(
+                                                "{} ({}) - {} routes",
+                                                snet.name, use_type, route_count
+                                            ));
+                                        });
+                                    }
+                                });
+                        }
+                    });
+
+                ui.separator();
+
+                // NETS section (signal networks)
                 egui::CollapsingHeader::new(format!("NETS ({})", def.nets.len()))
                     .default_open(true)
                     .show(ui, |ui| {
