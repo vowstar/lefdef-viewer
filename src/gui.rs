@@ -489,6 +489,37 @@ impl LefDefViewer {
 
     fn load_def_file_sync(&mut self, def: Def, path: String) {
         // This is the synchronized version of DEF loading (after async completion)
+
+        // Extract routing layers from DEF and add to layer lists
+        for special_net in &def.special_nets {
+            for route in &special_net.routes {
+                let layer_key = format!("{}.ROUTE", route.layer);
+                self.all_layers.insert(layer_key.clone());
+                // Make routing layers visible by default
+                self.visible_layers.insert(layer_key);
+            }
+        }
+
+        // Extract layers from regular nets as well
+        for net in &def.nets {
+            for route in &net.routes {
+                let layer_key = format!("{}.ROUTE", route.layer);
+                self.all_layers.insert(layer_key.clone());
+                // Regular net routing visible by default
+                self.visible_layers.insert(layer_key);
+            }
+        }
+
+        // Extract layers from DEF PINS
+        for pin in &def.pins {
+            for rect in &pin.rects {
+                let layer_key = format!("{}.PIN", rect.layer);
+                self.all_layers.insert(layer_key.clone());
+                // PIN layers visible by default
+                self.visible_layers.insert(layer_key);
+            }
+        }
+
         self.def_data = Some(def);
         self.def_file_path = Some(path);
 
@@ -705,6 +736,73 @@ impl LefDefViewer {
         // Calculate blink effect (1 Hz = 1 second period)
         let elapsed = self.start_time.elapsed().as_secs_f32();
         let blink_on = (elapsed % 1.0) < 0.5; // On for 0.5s, off for 0.5s
+
+        // Render DIEAREA if enabled and available
+        if self.show_diearea && !def.die_area_points.is_empty() {
+            if def.die_area_points.len() == 2 {
+                // 2-point rectangle case
+                let p1 = &def.die_area_points[0];
+                let p2 = &def.die_area_points[1];
+
+                // Convert to LEF units and apply Y-axis flip
+                let x1 = (p1.0 / db_units) as f32;
+                let y1 = (p1.1 / db_units) as f32;
+                let x2 = (p2.0 / db_units) as f32;
+                let y2 = (p2.1 / db_units) as f32;
+
+                // Apply zoom and pan with Y-flip
+                let screen_x1 = center.x + self.pan_x + (x1 * self.zoom);
+                let screen_y1 = center.y + self.pan_y + ((die_area_max_y as f32 - y1) * self.zoom);
+                let screen_x2 = center.x + self.pan_x + (x2 * self.zoom);
+                let screen_y2 = center.y + self.pan_y + ((die_area_max_y as f32 - y2) * self.zoom);
+
+                let rect = egui::Rect::from_two_pos(
+                    egui::pos2(screen_x1, screen_y1),
+                    egui::pos2(screen_x2, screen_y2),
+                );
+
+                painter.rect_stroke(
+                    rect,
+                    0.0,
+                    egui::Stroke::new(3.0, egui::Color32::RED),
+                    egui::StrokeKind::Middle,
+                );
+
+                // Corner markers
+                painter.circle_filled(egui::pos2(screen_x1, screen_y1), 3.0, egui::Color32::RED);
+                painter.circle_filled(egui::pos2(screen_x2, screen_y2), 3.0, egui::Color32::RED);
+            } else {
+                // Polygon case
+                let mut screen_points: Vec<egui::Pos2> = Vec::new();
+
+                for point in &def.die_area_points {
+                    let x = (point.0 / db_units) as f32;
+                    let y = (point.1 / db_units) as f32;
+
+                    let screen_x = center.x + self.pan_x + (x * self.zoom);
+                    let screen_y =
+                        center.y + self.pan_y + ((die_area_max_y as f32 - y) * self.zoom);
+                    screen_points.push(egui::pos2(screen_x, screen_y));
+                }
+
+                // Fill
+                if screen_points.len() >= 3 {
+                    painter.add(egui::epaint::Shape::convex_polygon(
+                        screen_points.clone(),
+                        egui::Color32::from_rgba_unmultiplied(255, 0, 0, 15),
+                        egui::Stroke::NONE,
+                    ));
+                }
+
+                // Outline
+                for i in 0..screen_points.len() {
+                    let current = screen_points[i];
+                    let next = screen_points[(i + 1) % screen_points.len()];
+                    painter
+                        .line_segment([current, next], egui::Stroke::new(4.0, egui::Color32::RED));
+                }
+            }
+        }
 
         // Iterate through all components in DEF
         for component in &def.components {
@@ -1232,6 +1330,182 @@ impl LefDefViewer {
                                     egui::Stroke::new(1.0, color),
                                 ));
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Render DEF PINS if enabled
+        if self.show_pins {
+            for pin in &def.pins {
+                // Check selection filter
+                if !self.selected_pins.is_empty() && !self.selected_pins.contains(&pin.name) {
+                    continue;
+                }
+
+                // Convert pin position to screen coordinates with Y-flip
+                let pin_x = (pin.x / db_units) as f32;
+                let pin_y = (pin.y / db_units) as f32;
+                let screen_x = center.x + self.pan_x + (pin_x * self.zoom);
+                let screen_y =
+                    center.y + self.pan_y + ((die_area_max_y as f32 - pin_y) * self.zoom);
+
+                // Render pin position marker (small circle)
+                let pin_radius = 3.0;
+                let is_selected = self.selected_pins.contains(&pin.name);
+                let marker_color = if is_selected {
+                    egui::Color32::from_rgb(150, 150, 255) // Selected
+                } else {
+                    match pin.direction.as_str() {
+                        "INPUT" => egui::Color32::from_rgb(100, 255, 100),
+                        "OUTPUT" => egui::Color32::from_rgb(255, 100, 100),
+                        "INOUT" => egui::Color32::from_rgb(255, 255, 100),
+                        _ => egui::Color32::LIGHT_BLUE,
+                    }
+                };
+
+                painter.circle_filled(egui::pos2(screen_x, screen_y), pin_radius, marker_color);
+                painter.circle_stroke(
+                    egui::pos2(screen_x, screen_y),
+                    pin_radius,
+                    egui::Stroke::new(1.0, egui::Color32::WHITE),
+                );
+
+                // Render PIN LAYER geometry (rectangles)
+                for rect in &pin.rects {
+                    let detailed_layer = format!("{}.PIN", rect.layer);
+                    // Check layer visibility
+                    if !self.visible_layers.contains(&detailed_layer) {
+                        continue;
+                    }
+
+                    // Convert rectangle coordinates (relative to pin position)
+                    let xl = ((pin.x + rect.xl) / db_units) as f32;
+                    let yl = ((pin.y + rect.yl) / db_units) as f32;
+                    let xh = ((pin.x + rect.xh) / db_units) as f32;
+                    let yh = ((pin.y + rect.yh) / db_units) as f32;
+
+                    // Apply Y-flip and zoom/pan
+                    let screen_xl = center.x + self.pan_x + (xl * self.zoom);
+                    let screen_yl =
+                        center.y + self.pan_y + ((die_area_max_y as f32 - yl) * self.zoom);
+                    let screen_xh = center.x + self.pan_x + (xh * self.zoom);
+                    let screen_yh =
+                        center.y + self.pan_y + ((die_area_max_y as f32 - yh) * self.zoom);
+
+                    let rect_shape = egui::Rect::from_two_pos(
+                        egui::pos2(screen_xl, screen_yl),
+                        egui::pos2(screen_xh, screen_yh),
+                    );
+
+                    let layer_color = self.get_layer_color(&detailed_layer);
+                    painter.rect_filled(rect_shape, 0.0, layer_color);
+                    painter.rect_stroke(
+                        rect_shape,
+                        0.0,
+                        egui::Stroke::new(1.0, egui::Color32::WHITE),
+                        egui::StrokeKind::Middle,
+                    );
+                }
+
+                // Render pin name if zoom is sufficient
+                if self.show_pin_text && self.zoom > 1.0 {
+                    texts_to_render.push((
+                        egui::pos2(screen_x + pin_radius + 5.0, screen_y),
+                        pin.name.clone(),
+                        egui::FontId::monospace(10.0),
+                        egui::Color32::WHITE,
+                    ));
+                }
+            }
+        }
+
+        // Render SPECIALNETS (power/ground routing) if enabled
+        if self.show_nets {
+            for special_net in &def.special_nets {
+                // Determine color based on use type
+                let net_color = match special_net.use_type.as_deref() {
+                    Some("POWER") => egui::Color32::from_rgb(255, 50, 50), // Red for VDD
+                    Some("GROUND") => egui::Color32::from_rgb(50, 50, 255), // Blue for VSS
+                    _ => egui::Color32::from_rgb(200, 200, 0),             // Yellow for others
+                };
+
+                // Render all routing segments
+                for route in &special_net.routes {
+                    // Check layer visibility
+                    let layer_key = format!("{}.ROUTE", route.layer);
+                    if !self.visible_layers.contains(&layer_key) {
+                        continue;
+                    }
+
+                    // Convert route width from DEF units to screen space
+                    let line_width = (route.width / db_units) as f32 * self.zoom;
+                    let min_width = 1.0; // Minimum visible width
+                    let visual_width = line_width.max(min_width);
+
+                    // Render route points as connected line segments
+                    if route.points.len() >= 2 {
+                        for i in 0..route.points.len() - 1 {
+                            let p1 = &route.points[i];
+                            let p2 = &route.points[i + 1];
+
+                            // Convert to screen coordinates with Y-flip
+                            let x1 = (p1.x / db_units) as f32;
+                            let y1 = (p1.y / db_units) as f32;
+                            let x2 = (p2.x / db_units) as f32;
+                            let y2 = (p2.y / db_units) as f32;
+
+                            let screen_x1 = center.x + self.pan_x + (x1 * self.zoom);
+                            let screen_y1 =
+                                center.y + self.pan_y + ((die_area_max_y as f32 - y1) * self.zoom);
+                            let screen_x2 = center.x + self.pan_x + (x2 * self.zoom);
+                            let screen_y2 =
+                                center.y + self.pan_y + ((die_area_max_y as f32 - y2) * self.zoom);
+
+                            // Draw thick line for power/ground routing
+                            painter.line_segment(
+                                [
+                                    egui::pos2(screen_x1, screen_y1),
+                                    egui::pos2(screen_x2, screen_y2),
+                                ],
+                                egui::Stroke::new(visual_width, net_color),
+                            );
+                        }
+                    }
+
+                    // Render vias
+                    for (via_name, via_x, via_y) in &route.vias {
+                        let x = (*via_x / db_units) as f32;
+                        let y = (*via_y / db_units) as f32;
+
+                        let screen_x = center.x + self.pan_x + (x * self.zoom);
+                        let screen_y =
+                            center.y + self.pan_y + ((die_area_max_y as f32 - y) * self.zoom);
+
+                        // Draw via as small square
+                        let via_size = (5.0 * self.zoom).max(2.0);
+                        let via_rect = egui::Rect::from_center_size(
+                            egui::pos2(screen_x, screen_y),
+                            egui::vec2(via_size, via_size),
+                        );
+
+                        painter.rect_filled(via_rect, 0.0, net_color);
+                        painter.rect_stroke(
+                            via_rect,
+                            0.0,
+                            egui::Stroke::new(1.0, egui::Color32::WHITE),
+                            egui::StrokeKind::Middle,
+                        );
+
+                        // Draw via name if zoom is high enough
+                        if self.zoom > 5.0 {
+                            texts_to_render.push((
+                                egui::pos2(screen_x + via_size, screen_y),
+                                via_name.clone(),
+                                egui::FontId::monospace(8.0),
+                                egui::Color32::WHITE,
+                            ));
                         }
                     }
                 }
