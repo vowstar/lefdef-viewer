@@ -82,11 +82,9 @@ impl DefItemParser for DefNetParser {
         // Check for NET header: "- NETNAME ..."
         if parts.len() >= 2 && parts[0] == "-" {
             if let Some(net_name) = parse_identifier(parts[1]) {
-                let mut context = NetContext::new(net_name.to_string());
-
-                // Parse any immediate connections in header: ( INSTANCE PIN )
-                self.parse_connections_in_line(&mut context, line);
-
+                // Only create context with name, don't parse attributes here
+                // All attributes will be parsed in parse_continuation
+                let context = NetContext::new(net_name.to_string());
                 return Some(context);
             }
         }
@@ -118,6 +116,30 @@ impl DefItemParser for DefNetParser {
     }
 
     fn finalize(&self, context: Self::Context) -> ParseResult<Self::Item> {
+        // Convert NetRouting to DefRoute
+        let routes = context
+            .routing
+            .iter()
+            .map(|r| crate::def::DefRoute {
+                layer: r.layer.clone(),
+                width: r.width.unwrap_or(0.0),
+                routing_type: r.shape.clone(),
+                shape: None, // TODO: parse STRIPE, FOLLOWPIN, etc.
+                points: r
+                    .points
+                    .iter()
+                    .map(|(x, y)| crate::def::DefRoutingPoint {
+                        x: *x,
+                        y: *y,
+                        ext: None,
+                    })
+                    .collect(),
+                vias: Vec::new(), // TODO: parse vias from routing
+                mask: None,
+                style: None,
+            })
+            .collect();
+
         Ok(DefNet {
             name: context.name,
             connections: context.connections.len(),
@@ -133,7 +155,7 @@ impl DefItemParser for DefNetParser {
                 .map(|c| c.instance.clone())
                 .collect(),
             instance_pins: context.connections.iter().map(|c| c.pin.clone()).collect(),
-            routing: context.routing.len(),
+            routes,
         })
     }
 
@@ -144,22 +166,41 @@ impl DefItemParser for DefNetParser {
 
 impl DefNetParser {
     /// Parse connections from any line that might contain them
+    /// Only parse connections before routing keywords (ROUTED, NEW, etc.)
     fn parse_connections_in_line(&self, context: &mut NetContext, line: &str) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         let mut i = 0;
 
         while i < parts.len() {
-            // Look for connection pattern: ( INSTANCE PIN )
-            if i + 3 < parts.len() && parts[i] == "(" && parts[i + 3] == ")" {
-                let instance = parts[i + 1].to_string();
-                let pin = parts[i + 2].to_string();
+            // Stop parsing connections when we hit routing keywords or USE
+            if parts[i] == "ROUTED"
+                || parts[i] == "NEW"
+                || parts[i] == "FIXED"
+                || parts[i] == "COVER"
+                || parts[i] == "USE"
+                || parts[i] == "+"
+            {
+                break;
+            }
 
-                context.connections.push(NetConnection {
-                    instance,
-                    pin,
-                    is_synthesized: false, // TODO: detect synthesized connections
-                });
-                i += 4; // Skip past this connection
+            // Look for connection pattern: ( INSTANCE PIN )
+            // Check that the next two tokens are NOT numbers (to avoid parsing coordinates)
+            if i + 3 < parts.len() && parts[i] == "(" && parts[i + 3] == ")" {
+                // Check if this looks like a coordinate (both parts are numbers)
+                let is_coordinate =
+                    parts[i + 1].parse::<f64>().is_ok() && parts[i + 2].parse::<f64>().is_ok();
+
+                if !is_coordinate {
+                    let instance = parts[i + 1].to_string();
+                    let pin = parts[i + 2].to_string();
+
+                    context.connections.push(NetConnection {
+                        instance,
+                        pin,
+                        is_synthesized: false, // TODO: detect synthesized connections
+                    });
+                }
+                i += 4; // Skip past this pattern
             } else {
                 i += 1;
             }
@@ -277,9 +318,13 @@ mod tests {
     #[test]
     fn test_parse_simple_net_header() {
         let parser = DefNetParser::new();
-        let context = parser.parse_header("- N1 ( I1 A ) ( I2 B )").unwrap();
+        let mut context = parser.parse_header("- N1 ( I1 A ) ( I2 B )").unwrap();
 
         assert_eq!(context.name, "N1");
+
+        // Parse the full line to get connections (now done in parse_continuation)
+        parser.parse_line_attributes(&mut context, "- N1 ( I1 A ) ( I2 B )");
+
         assert_eq!(context.connections.len(), 2);
         assert_eq!(context.connections[0].instance, "I1");
         assert_eq!(context.connections[0].pin, "A");

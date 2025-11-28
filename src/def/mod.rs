@@ -32,6 +32,25 @@ pub struct DefPin {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefRoutingPoint {
+    pub x: f64,
+    pub y: f64,
+    pub ext: Option<f64>, // Extension value for tapered routing
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefRoute {
+    pub layer: String,
+    pub width: f64,
+    pub routing_type: String,  // ROUTED, FIXED, COVER
+    pub shape: Option<String>, // STRIPE, FOLLOWPIN, RING, etc.
+    pub points: Vec<DefRoutingPoint>,
+    pub vias: Vec<(String, f64, f64)>, // (via_name, x, y)
+    pub mask: Option<i32>,
+    pub style: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefNet {
     pub name: String,
     pub connections: usize,
@@ -43,7 +62,18 @@ pub struct DefNet {
     pub shielded: bool,
     pub instances: Vec<String>,
     pub instance_pins: Vec<String>,
-    pub routing: usize,
+    pub routes: Vec<DefRoute>, // Changed from routing: usize to routes: Vec<DefRoute>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefSpecialNet {
+    pub name: String,
+    pub connections: Vec<(String, String)>, // (instance, pin) or ("*", pin_name)
+    pub routes: Vec<DefRoute>,
+    pub use_type: Option<String>, // POWER, GROUND, CLOCK, etc.
+    pub weight: Option<f64>,
+    pub voltage: Option<f64>,
+    pub original_net: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,6 +160,7 @@ pub struct Def {
     pub g_cell_grid_y: Vec<DefGCellGrid>,
     pub pins: Vec<DefPin>,
     pub nets: Vec<DefNet>,
+    pub special_nets: Vec<DefSpecialNet>, // Added for power/ground networks
     pub components: Vec<DefComponent>,
     pub rows: Vec<DefRow>,
     pub tracks_x: Vec<DefTrack>,

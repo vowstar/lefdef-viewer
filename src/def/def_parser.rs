@@ -128,6 +128,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
     let mut components = Vec::new();
     let mut pins = Vec::new();
     let mut nets = Vec::new();
+    let mut special_nets = Vec::new();
     let mut vias = Vec::new();
 
     let lines = &preprocessed.lines;
@@ -245,6 +246,43 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                             println!("[DBG]   Error parsing PINS section: {e}");
                             // Fallback: skip to END PINS
                             while i < lines.len() && !lines[i].trim().starts_with("END PINS") {
+                                i += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            "SPECIALNETS" if parts.len() > 1 => {
+                if let Ok(num_special_nets) = parts[1].parse::<usize>() {
+                    println!(
+                        "[DBG]   Found SPECIALNETS section with {num_special_nets} special nets"
+                    );
+                    i += 1;
+
+                    // Use the unified parsing framework with preprocessed lines
+                    let special_net_parser =
+                        crate::def::parser::specialnet::DefSpecialNetParser::new();
+                    let multi_parser =
+                        crate::def::parser::MultiLineParser::with_preprocessed(special_net_parser)
+                            .with_debug(true);
+
+                    match multi_parser.parse_section_preprocessed(lines, i, "END SPECIALNETS") {
+                        Ok((parsed_special_nets, next_index)) => {
+                            for special_net in parsed_special_nets {
+                                println!(
+                                    "[DBG]     SpecialNet: {} with {} routes",
+                                    special_net.name,
+                                    special_net.routes.len()
+                                );
+                                special_nets.push(special_net);
+                            }
+                            i = next_index;
+                        }
+                        Err(e) => {
+                            println!("[DBG]   Error parsing SPECIALNETS section: {e}");
+                            // Fallback: skip to END SPECIALNETS
+                            while i < lines.len() && !lines[i].trim().starts_with("END SPECIALNETS")
+                            {
                                 i += 1;
                             }
                         }
@@ -526,6 +564,7 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
             g_cell_grid_y: Vec::new(),
             pins,
             nets,
+            special_nets, // Parsed from SPECIALNETS section
             components,
             rows: Vec::new(),
             tracks_x: Vec::new(),

@@ -11,6 +11,7 @@ pub mod common;
 pub mod component;
 pub mod net;
 pub mod pin;
+pub mod specialnet;
 pub mod via;
 
 use std::collections::HashMap;

@@ -18,6 +18,7 @@ pub struct PinContext {
     pub y: f64,
     pub orient: String,
     pub status: String,
+    pub rects: Vec<crate::def::DefRect>, // PIN geometry (LAYER rectangles)
 }
 
 impl PinContext {
@@ -31,6 +32,7 @@ impl PinContext {
             y: 0.0,
             orient: String::new(),
             status: "PLACED".to_string(),
+            rects: Vec::new(),
         }
     }
 }
@@ -105,7 +107,7 @@ impl DefItemParser for DefPinParser {
             orient: context.orient,
             x: context.x,
             y: context.y,
-            rects: Vec::new(),
+            rects: context.rects, // Use parsed rectangles from context
             ports: Vec::new(),
         })
     }
@@ -165,6 +167,56 @@ impl DefPinParser {
             context.x = x;
             context.y = y;
             context.orient = orient;
+        }
+
+        // Parse LAYER geometry: LAYER layerName ( xl yl ) ( xh yh )
+        self.parse_layer_geometry(context, line);
+    }
+
+    /// Parse LAYER geometry from a line
+    /// Format: LAYER layerName ( xl yl ) ( xh yh )
+    fn parse_layer_geometry(&self, context: &mut PinContext, line: &str) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        let mut i = 0;
+
+        while i < parts.len() {
+            if parts[i] == "LAYER" && i + 1 < parts.len() {
+                let layer = parts[i + 1].to_string();
+
+                // Look for two coordinate pairs: ( xl yl ) ( xh yh )
+                let mut coords = Vec::new();
+                let mut j = i + 2;
+
+                while j < parts.len() && coords.len() < 2 {
+                    if parts[j] == "(" && j + 3 < parts.len() && parts[j + 3] == ")" {
+                        if let (Ok(x), Ok(y)) =
+                            (parts[j + 1].parse::<f64>(), parts[j + 2].parse::<f64>())
+                        {
+                            coords.push((x, y));
+                            j += 4; // Skip ( x y )
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                // If we found two coordinate pairs, create a DefRect
+                if coords.len() == 2 {
+                    context.rects.push(crate::def::DefRect {
+                        layer,
+                        xl: coords[0].0,
+                        yl: coords[0].1,
+                        xh: coords[1].0,
+                        yh: coords[1].1,
+                    });
+                }
+
+                i = j; // Continue from where we left off
+            } else {
+                i += 1;
+            }
         }
     }
 }
