@@ -11,6 +11,7 @@ use nom::{
     IResult, Parser,
 };
 
+use super::preprocessor::preprocess;
 use super::{Def, DefGCellGrid, DefPolygon, DefVia, DefViaLayer};
 
 #[allow(dead_code)]
@@ -114,13 +115,22 @@ fn parse_gcell_grid(input: &str) -> IResult<&str, (Vec<DefGCellGrid>, Vec<DefGCe
 fn parse_def_simple(input: &str) -> IResult<&str, Def> {
     println!("[DBG] Starting DEF parsing...");
 
+    // Pass 1: Preprocess input (remove comments, merge logical lines)
+    println!("[DBG] Preprocessing DEF file...");
+    let preprocessed = preprocess(input);
+    println!(
+        "[DBG] Preprocessed: {} logical lines from {} raw lines",
+        preprocessed.lines.len(),
+        input.lines().count()
+    );
+
     let mut die_area_points = Vec::new();
     let mut components = Vec::new();
     let mut pins = Vec::new();
     let mut nets = Vec::new();
     let mut vias = Vec::new();
 
-    let lines: Vec<&str> = input.lines().collect();
+    let lines = &preprocessed.lines;
     let mut i = 0;
 
     while i < lines.len() {
@@ -140,25 +150,8 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
             "DIEAREA" => {
                 println!("[DBG]   Found DIEAREA");
 
-                // Collect all DIEAREA content across multiple lines until we find the semicolon
-                let mut diearea_content = String::new();
-                let mut line_idx = i;
-
-                // Add current line content (starting from DIEAREA)
-                diearea_content.push_str(line);
-
-                // Continue collecting until we find a semicolon
-                while !diearea_content.contains(';') && line_idx + 1 < lines.len() {
-                    line_idx += 1;
-                    diearea_content.push(' ');
-                    diearea_content.push_str(lines[line_idx].trim());
-                }
-
-                // Update the main loop index
-                i = line_idx;
-
-                // Parse all points from the collected content
-                let content_parts: Vec<&str> = diearea_content.split_whitespace().collect();
+                // With preprocessing, the entire DIEAREA is already on one logical line
+                let content_parts: Vec<&str> = line.split_whitespace().collect();
                 let mut j = 1; // Skip "DIEAREA"
 
                 while j < content_parts.len() {
@@ -186,16 +179,13 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                     println!("[DBG]   Found COMPONENTS section with {num_components} components");
                     i += 1;
 
-                    // Use the new unified parsing framework
+                    // Use the new unified parsing framework with preprocessed lines
                     let component_parser = crate::def::parser::component::DefComponentParser;
-                    let multi_parser = crate::def::parser::MultiLineParser::new(component_parser)
-                        .with_debug(true)
-                        .with_max_iterations(50000)
-                        .with_timeout(std::time::Duration::from_secs(120))
-                        .with_max_repeated_lines(10)
-                        .with_max_lines_per_item(500);
+                    let multi_parser =
+                        crate::def::parser::MultiLineParser::with_preprocessed(component_parser)
+                            .with_debug(true);
 
-                    match multi_parser.parse_section(&lines, i, "END COMPONENTS") {
+                    match multi_parser.parse_section_preprocessed(lines, i, "END COMPONENTS") {
                         Ok((parsed_components, next_index)) => {
                             for component in parsed_components {
                                 let placement_info =
@@ -234,16 +224,13 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                     println!("[DBG]   Found PINS section with {num_pins} pins");
                     i += 1;
 
-                    // Use the new unified parsing framework
+                    // Use the new unified parsing framework with preprocessed lines
                     let pin_parser = crate::def::parser::pin::DefPinParser::new();
-                    let multi_parser = crate::def::parser::MultiLineParser::new(pin_parser)
-                        .with_debug(true)
-                        .with_max_iterations(50000)
-                        .with_timeout(std::time::Duration::from_secs(120))
-                        .with_max_repeated_lines(10)
-                        .with_max_lines_per_item(200);
+                    let multi_parser =
+                        crate::def::parser::MultiLineParser::with_preprocessed(pin_parser)
+                            .with_debug(true);
 
-                    match multi_parser.parse_section(&lines, i, "END PINS") {
+                    match multi_parser.parse_section_preprocessed(lines, i, "END PINS") {
                         Ok((parsed_pins, next_index)) => {
                             for pin in parsed_pins {
                                 println!(
@@ -269,16 +256,13 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                     println!("[DBG]   Found NETS section with {num_nets} nets");
                     i += 1;
 
-                    // Use the new unified parsing framework
+                    // Use the new unified parsing framework with preprocessed lines
                     let net_parser = crate::def::parser::net::DefNetParser::new();
-                    let multi_parser = crate::def::parser::MultiLineParser::new(net_parser)
-                        .with_debug(true)
-                        .with_max_iterations(50000)
-                        .with_timeout(std::time::Duration::from_secs(120))
-                        .with_max_repeated_lines(10)
-                        .with_max_lines_per_item(1000);
+                    let multi_parser =
+                        crate::def::parser::MultiLineParser::with_preprocessed(net_parser)
+                            .with_debug(true);
 
-                    match multi_parser.parse_section(&lines, i, "END NETS") {
+                    match multi_parser.parse_section_preprocessed(lines, i, "END NETS") {
                         Ok((parsed_nets, next_index)) => {
                             for net in parsed_nets {
                                 println!(

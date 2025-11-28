@@ -13,6 +13,7 @@ use nom::{
 };
 
 use super::{Lef, LefMacro, LefObstruction, LefPin, LefPolygon, LefPort, LefRect};
+use crate::def::preprocessor::preprocess;
 
 fn calculate_polygon_winding(points: &[(f64, f64)]) -> bool {
     if points.len() < 3 {
@@ -181,7 +182,10 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
     let symmetry = Vec::new();
 
     let end_pattern = format!("END {name}");
-    let lines: Vec<&str> = remaining.lines().collect();
+
+    // Use preprocessor for multi-line statement support
+    let preprocessed = preprocess(remaining);
+    let lines = &preprocessed.lines;
     let mut i = 0;
 
     while i < lines.len() {
@@ -270,6 +274,28 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                 let mut shape = String::new();
                 let mut ports = Vec::new();
 
+                // Check if DIRECTION/USE/SHAPE are on the same line (preprocessed)
+                // Format: PIN name DIRECTION dir ; or PIN name DIRECTION dir USE type ;
+                for j in 2..parts.len() {
+                    match parts[j] {
+                        "DIRECTION" if j + 1 < parts.len() => {
+                            direction = parts[j + 1].trim_end_matches(';').to_string();
+                        }
+                        "USE" if j + 1 < parts.len() => {
+                            use_type = parts[j + 1].trim_end_matches(';').to_string();
+                            if use_type == "POWER" || use_type == "GROUND" {
+                                println!(
+                                    "[DBG]     Found POWER/GROUND pin: {pin_name} (USE: {use_type})"
+                                );
+                            }
+                        }
+                        "SHAPE" if j + 1 < parts.len() => {
+                            shape = parts[j + 1].trim_end_matches(';').to_string();
+                        }
+                        _ => {}
+                    }
+                }
+
                 // Look for PORT sections within this PIN
                 i += 1;
                 while i < lines.len() {
@@ -304,6 +330,19 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                 let mut polygons = Vec::new();
                                 let mut current_layer = String::new();
 
+                                // Check if LAYER is on the same line (preprocessed)
+                                // Format: PORT LAYER M1 ;
+                                for j in 1..pin_parts.len() {
+                                    if pin_parts[j] == "LAYER" && j + 1 < pin_parts.len() {
+                                        current_layer =
+                                            pin_parts[j + 1].trim_end_matches(';').to_string();
+                                        if use_type == "POWER" || use_type == "GROUND" {
+                                            println!("[DBG]       POWER/GROUND pin {pin_name} using layer: {current_layer}");
+                                        }
+                                        break;
+                                    }
+                                }
+
                                 i += 1;
                                 while i < lines.len() {
                                     let port_line = lines[i].trim();
@@ -323,7 +362,8 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                         println!("[DBG]       Processing port line: {port_line}");
                                         match port_parts[0] {
                                             "LAYER" if port_parts.len() > 1 => {
-                                                current_layer = port_parts[1].to_string();
+                                                current_layer =
+                                                    port_parts[1].trim_end_matches(';').to_string();
                                                 if use_type == "POWER" || use_type == "GROUND" {
                                                     println!("[DBG]       POWER/GROUND pin {pin_name} using layer: {current_layer}");
                                                 }
@@ -616,6 +656,17 @@ fn skip_to_macro(input: &str) -> IResult<&str, &str> {
 }
 
 pub fn parse_lef(input: &str) -> IResult<&str, Lef> {
+    println!("[DBG] Starting LEF parsing...");
+    println!("[DBG] Preprocessing LEF file...");
+
+    // Preprocess entire file first
+    let preprocessed = preprocess(input);
+    println!(
+        "[DBG] Preprocessed: {} logical lines from {} raw lines",
+        preprocessed.lines.len(),
+        input.lines().count()
+    );
+
     let (mut input, _) = multispace0(input)?;
     let mut macros = Vec::new();
 
@@ -640,5 +691,6 @@ pub fn parse_lef(input: &str) -> IResult<&str, Lef> {
         }
     }
 
+    println!("[PASS] LEF parsed: {} macros", macros.len());
     Ok((input, Lef { macros }))
 }

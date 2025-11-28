@@ -196,10 +196,14 @@ pub trait DefItemParser {
 /// Enhanced universal multi-line parser engine
 pub struct MultiLineParser<P: DefItemParser> {
     parser: P,
+    #[allow(dead_code)]
     max_iterations: usize,
     debug_mode: bool,
+    #[allow(dead_code)]
     timeout_duration: std::time::Duration,
+    #[allow(dead_code)]
     max_repeated_line_count: usize,
+    #[allow(dead_code)]
     max_lines_per_item: usize,
 }
 
@@ -215,6 +219,12 @@ impl<P: DefItemParser> MultiLineParser<P> {
         }
     }
 
+    /// Create parser with preprocessed mode enabled (recommended)
+    pub fn with_preprocessed(parser: P) -> Self {
+        Self::new(parser)
+    }
+
+    #[allow(dead_code)]
     pub fn with_max_iterations(mut self, max: usize) -> Self {
         self.max_iterations = max;
         self
@@ -225,22 +235,29 @@ impl<P: DefItemParser> MultiLineParser<P> {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_timeout(mut self, duration: std::time::Duration) -> Self {
         self.timeout_duration = duration;
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_max_repeated_lines(mut self, count: usize) -> Self {
         self.max_repeated_line_count = count;
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_max_lines_per_item(mut self, lines: usize) -> Self {
         self.max_lines_per_item = lines;
         self
     }
 
     /// Parse a section containing multiple items with enhanced loop detection
+    ///
+    /// NOTE: This method expects raw (non-preprocessed) lines.
+    /// For better handling of multi-line statements, use parse_section_preprocessed instead.
+    #[allow(dead_code)]
     pub fn parse_section(
         &self,
         lines: &[&str],
@@ -344,7 +361,109 @@ impl<P: DefItemParser> MultiLineParser<P> {
         Ok((items, i))
     }
 
+    /// Parse preprocessed lines (recommended method for multi-line statement support)
+    ///
+    /// This method works with preprocessed logical lines where:
+    /// - Comments are already removed
+    /// - Multi-line statements are merged until semicolon
+    /// - Each line represents a complete logical statement
+    pub fn parse_section_preprocessed(
+        &self,
+        lines: &[String],
+        start_index: usize,
+        end_pattern: &str,
+    ) -> ParseResult<(Vec<P::Item>, usize)> {
+        let line_refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+        self.parse_section_preprocessed_refs(&line_refs, start_index, end_pattern)
+    }
+
+    /// Parse preprocessed lines using string references
+    pub fn parse_section_preprocessed_refs(
+        &self,
+        lines: &[&str],
+        start_index: usize,
+        end_pattern: &str,
+    ) -> ParseResult<(Vec<P::Item>, usize)> {
+        let mut items = Vec::new();
+        let mut i = start_index;
+
+        if self.debug_mode {
+            println!(
+                "[DBG] Starting {} section parsing (preprocessed) at line {}",
+                P::item_name(),
+                start_index
+            );
+        }
+
+        while i < lines.len() {
+            let line = lines[i].trim();
+
+            // Check for section end
+            if line.starts_with(end_pattern) {
+                if self.debug_mode {
+                    println!("[DBG] Found section end: {end_pattern}");
+                }
+                break;
+            }
+
+            // Skip empty lines
+            if line.is_empty() {
+                i += 1;
+                continue;
+            }
+
+            // Try to parse as new item
+            if let Some(mut item_context) = self.parser.parse_header(line) {
+                if self.debug_mode {
+                    println!(
+                        "[DBG] Parsing {} #{}: {}",
+                        P::item_name(),
+                        items.len() + 1,
+                        line
+                    );
+                }
+
+                // For preprocessed lines, each line is complete
+                // Parse the entire line as continuation to extract all attributes
+                let result = self.parser.parse_continuation(&mut item_context, line);
+
+                match result {
+                    ContinuationResult::Complete | ContinuationResult::Continue => {
+                        // Finalize and add item
+                        items.push(self.parser.finalize(item_context)?);
+                        i += 1;
+                    }
+                    ContinuationResult::NextItem => {
+                        // Should not happen with preprocessed lines
+                        items.push(self.parser.finalize(item_context)?);
+                        i += 1;
+                    }
+                    ContinuationResult::Error(msg) => {
+                        return Err(ParseError::InvalidFormat(msg));
+                    }
+                }
+            } else {
+                // Not a valid item header, skip line
+                if self.debug_mode {
+                    println!("[DBG] Skipping non-item line: {line}");
+                }
+                i += 1;
+            }
+        }
+
+        if self.debug_mode {
+            println!(
+                "[DBG] Completed {} section: {} items parsed",
+                P::item_name(),
+                items.len()
+            );
+        }
+
+        Ok((items, i))
+    }
+
     /// Parse a single item starting from the header line with length limits
+    #[allow(dead_code)]
     fn parse_single_item(
         &self,
         lines: &[&str],

@@ -139,4 +139,5 @@ pub struct Def {
 
 pub mod def_parser;
 pub mod parser;
+pub mod preprocessor;
 pub mod reader;
