@@ -60,15 +60,16 @@ impl DefItemParser for DefPinParser {
         let parts: Vec<&str> = line.split_whitespace().collect();
 
         // Check for PIN header: "- PINNAME + ..."
-        if parts.len() >= 2 && parts[0] == "-" {
-            if let Some(pin_name) = parse_identifier(parts[1]) {
-                let mut context = PinContext::new(pin_name.to_string());
+        if parts.len() >= 2
+            && parts[0] == "-"
+            && let Some(pin_name) = parse_identifier(parts[1])
+        {
+            let mut context = PinContext::new(pin_name.to_string());
 
-                // Parse header line for immediate attributes
-                self.parse_header_attributes(&mut context, &parts);
+            // Parse header line for immediate attributes
+            self.parse_header_attributes(&mut context, &parts);
 
-                return Some(context);
-            }
+            return Some(context);
         }
 
         None

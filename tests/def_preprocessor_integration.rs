@@ -3,8 +3,8 @@
 
 //! Integration tests for DEF preprocessor with parser
 
-use lefdef_viewer::def::parser::component::DefComponentParser;
 use lefdef_viewer::def::parser::MultiLineParser;
+use lefdef_viewer::def::parser::component::DefComponentParser;
 use lefdef_viewer::def::preprocessor::preprocess;
 
 #[test]

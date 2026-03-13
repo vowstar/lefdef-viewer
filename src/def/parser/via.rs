@@ -81,15 +81,16 @@ impl DefItemParser for DefViaParser {
         let parts: Vec<&str> = line.split_whitespace().collect();
 
         // Check for VIA header: "- VIANAME ..."
-        if parts.len() >= 2 && parts[0] == "-" {
-            if let Some(via_name) = parse_identifier(parts[1]) {
-                let mut context = ViaContext::new(via_name.to_string());
+        if parts.len() >= 2
+            && parts[0] == "-"
+            && let Some(via_name) = parse_identifier(parts[1])
+        {
+            let mut context = ViaContext::new(via_name.to_string());
 
-                // Parse any immediate attributes in header line
-                self.parse_header_attributes(&mut context, &parts);
+            // Parse any immediate attributes in header line
+            self.parse_header_attributes(&mut context, &parts);
 
-                return Some(context);
-            }
+            return Some(context);
         }
 
         None
@@ -203,10 +204,11 @@ impl DefViaParser {
             "LAYER" if parts.len() >= 3 => {
                 context.current_layer = Some(parts[2].to_string());
                 // Check for MASK after LAYER
-                if parts.len() >= 5 && parts[3] == "MASK" {
-                    if let Ok(mask) = parts[4].parse::<i32>() {
-                        context.current_mask = Some(mask);
-                    }
+                if parts.len() >= 5
+                    && parts[3] == "MASK"
+                    && let Ok(mask) = parts[4].parse::<i32>()
+                {
+                    context.current_mask = Some(mask);
                 }
             }
             "MASK" if parts.len() >= 3 => {
@@ -238,20 +240,19 @@ impl DefViaParser {
                     && i + 7 < parts.len()
                     && parts[i + 4] == "("
                     && parts[i + 7] == ")"
-                {
-                    if let (Ok(x1), Ok(y1), Ok(x2), Ok(y2)) = (
+                    && let (Ok(x1), Ok(y1), Ok(x2), Ok(y2)) = (
                         parts[i + 1].parse::<f64>(),
                         parts[i + 2].parse::<f64>(),
                         parts[i + 5].parse::<f64>(),
                         parts[i + 6].parse::<f64>(),
-                    ) {
-                        xl = x1;
-                        yl = y1;
-                        xh = x2;
-                        yh = y2;
-                        found_coords = true;
-                        break;
-                    }
+                    )
+                {
+                    xl = x1;
+                    yl = y1;
+                    xh = x2;
+                    yh = y2;
+                    found_coords = true;
+                    break;
                 }
             }
 
@@ -282,11 +283,13 @@ impl DefViaParser {
         let mut mask_num = None;
 
         // 修复可折叠的if语句
-        if part_idx < parts.len() && parts[part_idx] == "MASK" && part_idx + 1 < parts.len() {
-            if let Ok(mask) = parts[part_idx + 1].parse::<i32>() {
-                mask_num = Some(mask);
-                part_idx += 2;
-            }
+        if part_idx < parts.len()
+            && parts[part_idx] == "MASK"
+            && part_idx + 1 < parts.len()
+            && let Ok(mask) = parts[part_idx + 1].parse::<i32>()
+        {
+            mask_num = Some(mask);
+            part_idx += 2;
         }
 
         // Parse coordinate pairs

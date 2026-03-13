@@ -16,28 +16,26 @@ use std::collections::BTreeMap;
 /// Returns Some((base_name, index)) if pin follows bus pattern, None otherwise
 fn extract_bus_info(pin_name: &str) -> Option<(String, usize)> {
     // Try pattern with square brackets: base_name[index]
-    if let Some(bracket_start) = pin_name.rfind('[') {
-        if let Some(bracket_end) = pin_name.rfind(']') {
-            if bracket_start < bracket_end {
-                let base_name = pin_name[..bracket_start].to_string();
-                let index_str = &pin_name[bracket_start + 1..bracket_end];
-                if let Ok(index) = index_str.parse::<usize>() {
-                    return Some((base_name, index));
-                }
-            }
+    if let Some(bracket_start) = pin_name.rfind('[')
+        && let Some(bracket_end) = pin_name.rfind(']')
+        && bracket_start < bracket_end
+    {
+        let base_name = pin_name[..bracket_start].to_string();
+        let index_str = &pin_name[bracket_start + 1..bracket_end];
+        if let Ok(index) = index_str.parse::<usize>() {
+            return Some((base_name, index));
         }
     }
 
     // Try pattern with angle brackets: base_name<index>
-    if let Some(angle_start) = pin_name.rfind('<') {
-        if let Some(angle_end) = pin_name.rfind('>') {
-            if angle_start < angle_end {
-                let base_name = pin_name[..angle_start].to_string();
-                let index_str = &pin_name[angle_start + 1..angle_end];
-                if let Ok(index) = index_str.parse::<usize>() {
-                    return Some((base_name, index));
-                }
-            }
+    if let Some(angle_start) = pin_name.rfind('<')
+        && let Some(angle_end) = pin_name.rfind('>')
+        && angle_start < angle_end
+    {
+        let base_name = pin_name[..angle_start].to_string();
+        let index_str = &pin_name[angle_start + 1..angle_end];
+        if let Ok(index) = index_str.parse::<usize>() {
+            return Some((base_name, index));
         }
     }
 

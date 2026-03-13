@@ -80,13 +80,14 @@ impl DefItemParser for DefNetParser {
         let parts: Vec<&str> = line.split_whitespace().collect();
 
         // Check for NET header: "- NETNAME ..."
-        if parts.len() >= 2 && parts[0] == "-" {
-            if let Some(net_name) = parse_identifier(parts[1]) {
-                // Only create context with name, don't parse attributes here
-                // All attributes will be parsed in parse_continuation
-                let context = NetContext::new(net_name.to_string());
-                return Some(context);
-            }
+        if parts.len() >= 2
+            && parts[0] == "-"
+            && let Some(net_name) = parse_identifier(parts[1])
+        {
+            // Only create context with name, don't parse attributes here
+            // All attributes will be parsed in parse_continuation
+            let context = NetContext::new(net_name.to_string());
+            return Some(context);
         }
 
         None
@@ -315,10 +316,10 @@ impl DefNetParser {
         }
 
         // Extract WEIGHT value
-        if let Some(weight_str) = extract_keyword_value(line, "WEIGHT") {
-            if let Ok(weight) = weight_str.parse::<f64>() {
-                context.weight = Some(weight);
-            }
+        if let Some(weight_str) = extract_keyword_value(line, "WEIGHT")
+            && let Ok(weight) = weight_str.parse::<f64>()
+        {
+            context.weight = Some(weight);
         }
 
         // Extract SOURCE value

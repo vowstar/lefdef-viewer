@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::{def_parser::parse_def, Def};
+use super::{Def, def_parser::parse_def};
 
 pub struct DefReader;
 

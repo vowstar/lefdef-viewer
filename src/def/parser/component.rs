@@ -148,10 +148,10 @@ impl DefComponentParser {
                     }
                 }
                 "WEIGHT" => {
-                    if let Some(weight_str) = parts.next() {
-                        if let Ok(weight) = weight_str.parse::<f64>() {
-                            context.weight = Some(weight);
-                        }
+                    if let Some(weight_str) = parts.next()
+                        && let Ok(weight) = weight_str.parse::<f64>()
+                    {
+                        context.weight = Some(weight);
                     }
                 }
                 "EEQ" => {
@@ -165,10 +165,10 @@ impl DefComponentParser {
                     }
                 }
                 "POWER" => {
-                    if let Some(power_str) = parts.next() {
-                        if let Ok(power) = power_str.parse::<f64>() {
-                            context.power = Some(power);
-                        }
+                    if let Some(power_str) = parts.next()
+                        && let Ok(power) = power_str.parse::<f64>()
+                    {
+                        context.power = Some(power);
                     }
                 }
                 "GROUND" => {
@@ -177,12 +177,12 @@ impl DefComponentParser {
                     }
                 }
                 "PROPERTY" => {
-                    if let Some(prop_name) = parts.next() {
-                        if let Some(prop_value) = parts.next() {
-                            context
-                                .properties
-                                .push((prop_name.to_string(), prop_value.to_string()));
-                        }
+                    if let Some(prop_name) = parts.next()
+                        && let Some(prop_value) = parts.next()
+                    {
+                        context
+                            .properties
+                            .push((prop_name.to_string(), prop_value.to_string()));
                     }
                 }
                 _ => {
@@ -200,20 +200,19 @@ impl DefComponentParser {
         // PLACED ( x y ) orientation
         if parts.peek() == Some(&"(") {
             parts.next(); // consume '('
-            if let Some(x_str) = parts.next() {
-                if let Some(y_str) = parts.next() {
-                    if parts.next() == Some(")") {
-                        // consume ')'
-                        if let (Ok(x), Ok(y)) = (x_str.parse::<f64>(), y_str.parse::<f64>()) {
-                            let orientation = parts.next().unwrap_or("N").to_string();
-                            return Some(DefComponentPlacement {
-                                placement_type: placement_type.to_string(),
-                                x,
-                                y,
-                                orientation,
-                            });
-                        }
-                    }
+            if let Some(x_str) = parts.next()
+                && let Some(y_str) = parts.next()
+                && parts.next() == Some(")")
+            {
+                // consume ')'
+                if let (Ok(x), Ok(y)) = (x_str.parse::<f64>(), y_str.parse::<f64>()) {
+                    let orientation = parts.next().unwrap_or("N").to_string();
+                    return Some(DefComponentPlacement {
+                        placement_type: placement_type.to_string(),
+                        x,
+                        y,
+                        orientation,
+                    });
                 }
             }
         }
@@ -227,15 +226,14 @@ impl DefComponentParser {
         // HALO left bottom right top
         if let (Some(left_str), Some(bottom_str), Some(right_str), Some(top_str)) =
             (parts.next(), parts.next(), parts.next(), parts.next())
-        {
-            if let (Ok(left), Ok(bottom), Ok(right), Ok(top)) = (
+            && let (Ok(left), Ok(bottom), Ok(right), Ok(top)) = (
                 left_str.parse::<f64>(),
                 bottom_str.parse::<f64>(),
                 right_str.parse::<f64>(),
                 top_str.parse::<f64>(),
-            ) {
-                return Some((left, bottom, right, top));
-            }
+            )
+        {
+            return Some((left, bottom, right, top));
         }
         None
     }

@@ -2,13 +2,13 @@
 // SPDX-FileCopyrightText: 2025 Huang Rui <vowstar@gmail.com>
 
 use nom::{
+    IResult, Parser,
     branch::alt,
     bytes::complete::{tag, take_until, take_while1},
     character::complete::{char, multispace0, space1},
     multi::separated_list0,
     number::complete::double,
     sequence::{delimited, preceded, terminated},
-    IResult, Parser,
 };
 
 use super::preprocessor::preprocess;
@@ -404,8 +404,10 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                                                             layers.push(new_layer);
                                                         }
 
-                                                        println!("[DBG]       Added RECT on layer {} at ({:.1},{:.1}) -> ({:.1},{:.1})", 
-                                                               content_parts[2], xl, yl, xh, yh);
+                                                        println!(
+                                                            "[DBG]       Added RECT on layer {} at ({:.1},{:.1}) -> ({:.1},{:.1})",
+                                                            content_parts[2], xl, yl, xh, yh
+                                                        );
                                                     }
                                                 }
                                             }
@@ -515,10 +517,17 @@ fn parse_def_simple(input: &str) -> IResult<&str, Def> {
                                                             layers.push(new_layer);
                                                         }
 
-                                                        println!("[DBG]       Added POLYGON on layer {} with {} points{}: {:?}", 
-                                                               layer_name, points.len(),
-                                                               if let Some(mask) = mask_num { format!(" MASK {mask}") } else { String::new() },
-                                                               points);
+                                                        println!(
+                                                            "[DBG]       Added POLYGON on layer {} with {} points{}: {:?}",
+                                                            layer_name,
+                                                            points.len(),
+                                                            if let Some(mask) = mask_num {
+                                                                format!(" MASK {mask}")
+                                                            } else {
+                                                                String::new()
+                                                            },
+                                                            points
+                                                        );
                                                     }
                                                 }
                                             }

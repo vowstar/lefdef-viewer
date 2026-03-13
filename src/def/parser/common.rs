@@ -25,11 +25,7 @@ pub fn parse_identifier(input: &str) -> Option<&str> {
         .map(|(i, c)| i + c.len_utf8())
         .unwrap_or(0);
 
-    if end > 0 {
-        Some(&input[..end])
-    } else {
-        None
-    }
+    if end > 0 { Some(&input[..end]) } else { None }
 }
 
 /// Parse coordinate pair from strings like "(" "100" "200" ")"
@@ -44,10 +40,13 @@ pub fn parse_coordinate_pair(parts: &[&str], start_index: usize) -> Option<(f64,
         }
     }
     // Special case for the test where we have exactly 4 parts starting at index 0: "(" "0" "0" ")"
-    else if parts.len() == 4 && start_index == 0 && parts[0] == "(" && parts[3] == ")" {
-        if let (Ok(x), Ok(y)) = (parts[1].parse::<f64>(), parts[2].parse::<f64>()) {
-            return Some((x, y));
-        }
+    else if parts.len() == 4
+        && start_index == 0
+        && parts[0] == "("
+        && parts[3] == ")"
+        && let (Ok(x), Ok(y)) = (parts[1].parse::<f64>(), parts[2].parse::<f64>())
+    {
+        return Some((x, y));
     }
     None
 }
@@ -104,16 +103,17 @@ pub fn parse_placement(line: &str) -> Option<(String, f64, f64, String)> {
     let parts: Vec<&str> = line.split_whitespace().collect();
 
     for i in 0..parts.len() {
-        if (parts[i] == "PLACED" || parts[i] == "FIXED") && i + 5 < parts.len() {
-            if let Some((x, y)) = parse_coordinate_pair(&parts, i + 1) {
-                let status = parts[i].to_string();
-                let orient = if i + 5 < parts.len() {
-                    clean_semicolon(parts[i + 5]).to_string()
-                } else {
-                    String::new()
-                };
-                return Some((status, x, y, orient));
-            }
+        if (parts[i] == "PLACED" || parts[i] == "FIXED")
+            && i + 5 < parts.len()
+            && let Some((x, y)) = parse_coordinate_pair(&parts, i + 1)
+        {
+            let status = parts[i].to_string();
+            let orient = if i + 5 < parts.len() {
+                clean_semicolon(parts[i + 5]).to_string()
+            } else {
+                String::new()
+            };
+            return Some((status, x, y, orient));
         }
     }
     None

@@ -108,13 +108,14 @@ impl DefItemParser for DefSpecialNetParser {
         let parts: Vec<&str> = line.split_whitespace().collect();
 
         // Check for SPECIALNET header: "- NETNAME ..."
-        if parts.len() >= 2 && parts[0] == "-" {
-            if let Some(net_name) = parse_identifier(parts[1]) {
-                // Only create context with name, don't parse attributes here
-                // All attributes will be parsed in parse_continuation
-                let context = SpecialNetContext::new(net_name.to_string());
-                return Some(context);
-            }
+        if parts.len() >= 2
+            && parts[0] == "-"
+            && let Some(net_name) = parse_identifier(parts[1])
+        {
+            // Only create context with name, don't parse attributes here
+            // All attributes will be parsed in parse_continuation
+            let context = SpecialNetContext::new(net_name.to_string());
+            return Some(context);
         }
 
         None
@@ -222,11 +223,11 @@ impl DefSpecialNetParser {
                         // Extract width (next number after layer)
                         let mut width = 0.0;
                         let mut skip_count = 2; // routing_type + layer
-                        if i + 2 < parts.len() {
-                            if let Ok(w) = parts[i + 2].parse::<f64>() {
-                                width = w;
-                                skip_count = 3; // routing_type + layer + width
-                            }
+                        if i + 2 < parts.len()
+                            && let Ok(w) = parts[i + 2].parse::<f64>()
+                        {
+                            width = w;
+                            skip_count = 3; // routing_type + layer + width
                         }
 
                         // Check for SHAPE keyword (no need to extract shape separately)
@@ -249,11 +250,11 @@ impl DefSpecialNetParser {
 
                         let mut width = 0.0;
                         let mut skip_count = 2; // NEW + layer
-                        if i + 2 < parts.len() {
-                            if let Ok(w) = parts[i + 2].parse::<f64>() {
-                                width = w;
-                                skip_count = 3; // NEW + layer + width
-                            }
+                        if i + 2 < parts.len()
+                            && let Ok(w) = parts[i + 2].parse::<f64>()
+                        {
+                            width = w;
+                            skip_count = 3; // NEW + layer + width
                         }
 
                         // NEW continues with ROUTED as default routing_type
@@ -349,17 +350,17 @@ impl DefSpecialNetParser {
         }
 
         // Extract WEIGHT value
-        if let Some(weight_str) = extract_keyword_value(line, "WEIGHT") {
-            if let Ok(weight) = weight_str.parse::<f64>() {
-                context.weight = Some(weight);
-            }
+        if let Some(weight_str) = extract_keyword_value(line, "WEIGHT")
+            && let Ok(weight) = weight_str.parse::<f64>()
+        {
+            context.weight = Some(weight);
         }
 
         // Extract VOLTAGE value
-        if let Some(voltage_str) = extract_keyword_value(line, "VOLTAGE") {
-            if let Ok(voltage) = voltage_str.parse::<f64>() {
-                context.voltage = Some(voltage);
-            }
+        if let Some(voltage_str) = extract_keyword_value(line, "VOLTAGE")
+            && let Ok(voltage) = voltage_str.parse::<f64>()
+        {
+            context.voltage = Some(voltage);
         }
 
         // Extract ORIGINAL value

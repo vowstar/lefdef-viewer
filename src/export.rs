@@ -80,28 +80,26 @@ pub struct MacroCsvRecord {
 /// Returns Some((base_name, index)) if pin follows bus pattern, None otherwise
 fn extract_bus_info(pin_name: &str) -> Option<(String, usize)> {
     // Try pattern with square brackets: base_name[index]
-    if let Some(bracket_start) = pin_name.rfind('[') {
-        if let Some(bracket_end) = pin_name.rfind(']') {
-            if bracket_start < bracket_end {
-                let base_name = pin_name[..bracket_start].to_string();
-                let index_str = &pin_name[bracket_start + 1..bracket_end];
-                if let Ok(index) = index_str.parse::<usize>() {
-                    return Some((base_name, index));
-                }
-            }
+    if let Some(bracket_start) = pin_name.rfind('[')
+        && let Some(bracket_end) = pin_name.rfind(']')
+        && bracket_start < bracket_end
+    {
+        let base_name = pin_name[..bracket_start].to_string();
+        let index_str = &pin_name[bracket_start + 1..bracket_end];
+        if let Ok(index) = index_str.parse::<usize>() {
+            return Some((base_name, index));
         }
     }
 
     // Try pattern with angle brackets: base_name<index>
-    if let Some(angle_start) = pin_name.rfind('<') {
-        if let Some(angle_end) = pin_name.rfind('>') {
-            if angle_start < angle_end {
-                let base_name = pin_name[..angle_start].to_string();
-                let index_str = &pin_name[angle_start + 1..angle_end];
-                if let Ok(index) = index_str.parse::<usize>() {
-                    return Some((base_name, index));
-                }
-            }
+    if let Some(angle_start) = pin_name.rfind('<')
+        && let Some(angle_end) = pin_name.rfind('>')
+        && angle_start < angle_end
+    {
+        let base_name = pin_name[..angle_start].to_string();
+        let index_str = &pin_name[angle_start + 1..angle_end];
+        if let Ok(index) = index_str.parse::<usize>() {
+            return Some((base_name, index));
         }
     }
 
@@ -489,16 +487,15 @@ fn generate_verilog_port_declaration(pin_group: &[&LefPin]) -> String {
         let clean_name = clean_pin_name(&record.name);
 
         // Extract base name and range from compressed name
-        let port_declaration = if let Some(bracket_start) = clean_name.rfind('[') {
+
+        // Always generate as regular port declaration for syntax compatibility
+        if let Some(bracket_start) = clean_name.rfind('[') {
             let base_name = &clean_name[..bracket_start];
             let range_part = &clean_name[bracket_start..];
             format!("    {direction} {range_part} {base_name}  /**< {clean_name} */")
         } else {
             format!("    {direction} {clean_name}       /**< {clean_name} */")
-        };
-
-        // Always generate as regular port declaration for syntax compatibility
-        port_declaration
+        }
     }
 }
 
@@ -553,15 +550,15 @@ fn collect_used_pg_pins(
             });
 
         // Only add power/ground pins to the set if they actually exist in this cell
-        if let Some(power) = related_power {
-            if existing_pins.contains(power) {
-                used_pg_pins.insert(power.to_string());
-            }
+        if let Some(power) = related_power
+            && existing_pins.contains(power)
+        {
+            used_pg_pins.insert(power.to_string());
         }
-        if let Some(ground) = related_ground {
-            if existing_pins.contains(ground) {
-                used_pg_pins.insert(ground.to_string());
-            }
+        if let Some(ground) = related_ground
+            && existing_pins.contains(ground)
+        {
+            used_pg_pins.insert(ground.to_string());
         }
     }
 
@@ -642,16 +639,16 @@ fn generate_lib_pin_definition_with_config(
                     "   pin({clean_name})  {{\n           direction : {direction};\n           capacitance : 0.02;\n"
                 );
                 // Only add related_power_pin if the referenced pin actually exists in this cell
-                if let Some(power) = related_power {
-                    if existing_pins.contains(power) {
-                        pin_def.push_str(&format!("           related_power_pin : {power} ;\n"));
-                    }
+                if let Some(power) = related_power
+                    && existing_pins.contains(power)
+                {
+                    pin_def.push_str(&format!("           related_power_pin : {power} ;\n"));
                 }
                 // Only add related_ground_pin if the referenced pin actually exists in this cell
-                if let Some(ground) = related_ground {
-                    if existing_pins.contains(ground) {
-                        pin_def.push_str(&format!("           related_ground_pin  : {ground} ;\n"));
-                    }
+                if let Some(ground) = related_ground
+                    && existing_pins.contains(ground)
+                {
+                    pin_def.push_str(&format!("           related_ground_pin  : {ground} ;\n"));
                 }
                 // Add is_analog attribute if set
                 if voltage_config
@@ -766,16 +763,16 @@ fn generate_lib_pin_definition_with_config(
                 format!("   bus({base_name}) {{\n        bus_type       : \"{bus_type}\";\n");
 
             // Only add related_power_pin if the referenced pin actually exists in this cell
-            if let Some(power) = related_power {
-                if existing_pins.contains(power) {
-                    result.push_str(&format!("        related_power_pin : {power} ;\n"));
-                }
+            if let Some(power) = related_power
+                && existing_pins.contains(power)
+            {
+                result.push_str(&format!("        related_power_pin : {power} ;\n"));
             }
             // Only add related_ground_pin if the referenced pin actually exists in this cell
-            if let Some(ground) = related_ground {
-                if existing_pins.contains(ground) {
-                    result.push_str(&format!("        related_ground_pin  : {ground} ;\n"));
-                }
+            if let Some(ground) = related_ground
+                && existing_pins.contains(ground)
+            {
+                result.push_str(&format!("        related_ground_pin  : {ground} ;\n"));
             }
             result.push('\n');
 

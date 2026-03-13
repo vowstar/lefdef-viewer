@@ -2,15 +2,15 @@
 // SPDX-FileCopyrightText: 2025 Huang Rui <vowstar@gmail.com>
 
 use eframe::egui;
-use lyon_tessellation::math::{point, Point};
+use lyon_tessellation::math::{Point, point};
 use lyon_tessellation::path::Path as LyonPath;
 use lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, FillVertex, VertexBuffers};
 use rfd::FileDialog;
 use std::sync::{Arc, Mutex, RwLock};
 
-use crate::def::{reader::DefReader, Def};
+use crate::def::{Def, reader::DefReader};
 use crate::export::{self, VoltageConfig};
-use crate::lef::{reader::LefReader, Lef};
+use crate::lef::{Lef, reader::LefReader};
 use crate::voltage_dialog::VoltageDialog;
 use std::collections::HashMap;
 use std::path::Path;
@@ -244,11 +244,11 @@ impl LefDefViewer {
             show_progress,
             ..
         } = &mut self.loading_state
+            && !*show_progress
+            && start_time.elapsed() >= Duration::from_millis(500)
         {
-            if !*show_progress && start_time.elapsed() >= Duration::from_millis(500) {
-                *show_progress = true;
-                ctx.request_repaint(); // Request UI update
-            }
+            *show_progress = true;
+            ctx.request_repaint(); // Request UI update
         }
 
         // Check for loading completion messages
@@ -2061,10 +2061,10 @@ impl LefDefViewer {
         }
 
         // Check if already tessellated
-        if let Ok(tessellated) = self.tessellated_macros.lock() {
-            if tessellated.contains(&macro_def.name) {
-                return; // Already done
-            }
+        if let Ok(tessellated) = self.tessellated_macros.lock()
+            && tessellated.contains(&macro_def.name)
+        {
+            return; // Already done
         }
 
         let Some(sender) = &self.render_job_sender else {
@@ -2337,67 +2337,67 @@ impl LefDefViewer {
         let mut found_any = false;
 
         // In DEF mode, calculate bounds from actual component placements
-        if self.def_mode {
-            if let Some(def) = &self.def_data {
-                let db_units = 1000.0;
+        if self.def_mode
+            && let Some(def) = &self.def_data
+        {
+            let db_units = 1000.0;
 
-                // Iterate through all components and calculate their bounding boxes
-                for component in &def.components {
-                    // Get component placement
-                    if let Some(ref placement) = component.placement {
-                        let px = (placement.x / db_units) as f32;
-                        let py = (placement.y / db_units) as f32;
+            // Iterate through all components and calculate their bounding boxes
+            for component in &def.components {
+                // Get component placement
+                if let Some(ref placement) = component.placement {
+                    let px = (placement.x / db_units) as f32;
+                    let py = (placement.y / db_units) as f32;
 
-                        // Find the LEF macro for this component
-                        let mut macro_size_x = 5.0; // Default size if macro not found
-                        let mut macro_size_y = 5.0;
+                    // Find the LEF macro for this component
+                    let mut macro_size_x = 5.0; // Default size if macro not found
+                    let mut macro_size_y = 5.0;
 
-                        for lef_file in &self.lef_files {
-                            if let Some(macro_def) = lef_file
-                                .data
-                                .macros
-                                .iter()
-                                .find(|m| m.name == component.macro_name)
-                            {
-                                macro_size_x = macro_def.size_x as f32;
-                                macro_size_y = macro_def.size_y as f32;
-                                break;
-                            }
+                    for lef_file in &self.lef_files {
+                        if let Some(macro_def) = lef_file
+                            .data
+                            .macros
+                            .iter()
+                            .find(|m| m.name == component.macro_name)
+                        {
+                            macro_size_x = macro_def.size_x as f32;
+                            macro_size_y = macro_def.size_y as f32;
+                            break;
                         }
-
-                        // Calculate component bounding box based on orientation
-                        // For simplicity, use axis-aligned bounding box
-                        let orientation = &placement.orientation;
-                        let (width, height) = match orientation.as_str() {
-                            "N" | "S" | "FN" | "FS" => (macro_size_x, macro_size_y),
-                            "E" | "W" | "FE" | "FW" => (macro_size_y, macro_size_x), // Rotated 90/270
-                            _ => (macro_size_x, macro_size_y),
-                        };
-
-                        // Component bounding box
-                        let comp_min_x = px;
-                        let comp_min_y = py;
-                        let comp_max_x = px + width;
-                        let comp_max_y = py + height;
-
-                        min_x = min_x.min(comp_min_x);
-                        min_y = min_y.min(comp_min_y);
-                        max_x = max_x.max(comp_max_x);
-                        max_y = max_y.max(comp_max_y);
-                        found_any = true;
                     }
-                }
 
-                if found_any && max_x > min_x && max_y > min_y {
-                    log::info!(
-                        "DEF mode: Using component bounds ({}, {}) to ({}, {})",
-                        min_x,
-                        min_y,
-                        max_x,
-                        max_y
-                    );
-                    return Some((min_x, min_y, max_x, max_y));
+                    // Calculate component bounding box based on orientation
+                    // For simplicity, use axis-aligned bounding box
+                    let orientation = &placement.orientation;
+                    let (width, height) = match orientation.as_str() {
+                        "N" | "S" | "FN" | "FS" => (macro_size_x, macro_size_y),
+                        "E" | "W" | "FE" | "FW" => (macro_size_y, macro_size_x), // Rotated 90/270
+                        _ => (macro_size_x, macro_size_y),
+                    };
+
+                    // Component bounding box
+                    let comp_min_x = px;
+                    let comp_min_y = py;
+                    let comp_max_x = px + width;
+                    let comp_max_y = py + height;
+
+                    min_x = min_x.min(comp_min_x);
+                    min_y = min_y.min(comp_min_y);
+                    max_x = max_x.max(comp_max_x);
+                    max_y = max_y.max(comp_max_y);
+                    found_any = true;
                 }
+            }
+
+            if found_any && max_x > min_x && max_y > min_y {
+                log::info!(
+                    "DEF mode: Using component bounds ({}, {}) to ({}, {})",
+                    min_x,
+                    min_y,
+                    max_x,
+                    max_y
+                );
+                return Some((min_x, min_y, max_x, max_y));
             }
         }
 
@@ -2628,8 +2628,10 @@ impl LefDefViewer {
                                 // Make power/ground pins visible by default
                                 if pin.use_type == "POWER" || pin.use_type == "GROUND" {
                                     self.visible_layers.insert(detailed_layer);
-                                    println!("DEBUG: Auto-enabled power layer: {}.PIN for pin {} (USE: {})",
-                                           rect.layer, pin.name, pin.use_type);
+                                    println!(
+                                        "DEBUG: Auto-enabled power layer: {}.PIN for pin {} (USE: {})",
+                                        rect.layer, pin.name, pin.use_type
+                                    );
                                 } else {
                                     self.visible_layers.insert(detailed_layer);
                                 }
@@ -2640,8 +2642,10 @@ impl LefDefViewer {
                                 // Make power/ground pins visible by default
                                 if pin.use_type == "POWER" || pin.use_type == "GROUND" {
                                     self.visible_layers.insert(detailed_layer);
-                                    println!("DEBUG: Auto-enabled power layer: {}.PIN for pin {} (USE: {})",
-                                           polygon.layer, pin.name, pin.use_type);
+                                    println!(
+                                        "DEBUG: Auto-enabled power layer: {}.PIN for pin {} (USE: {})",
+                                        polygon.layer, pin.name, pin.use_type
+                                    );
                                 } else {
                                     self.visible_layers.insert(detailed_layer);
                                 }
@@ -2769,12 +2773,11 @@ impl LefDefViewer {
 
     /// Extract basename from LEF file path for use in export filenames
     fn get_lef_basename(&self) -> String {
-        if let Some(lef_file) = self.lef_files.first() {
-            if let Some(file_stem) = Path::new(&lef_file.path).file_stem() {
-                if let Some(basename) = file_stem.to_str() {
-                    return basename.to_string();
-                }
-            }
+        if let Some(lef_file) = self.lef_files.first()
+            && let Some(file_stem) = Path::new(&lef_file.path).file_stem()
+            && let Some(basename) = file_stem.to_str()
+        {
+            return basename.to_string();
         }
         "lef_cells".to_string() // fallback default
     }
@@ -3225,8 +3228,8 @@ impl LefDefViewer {
                 ui.label(format!("DEF: {}", file_name)).on_hover_text(path);
 
                 // Show DEF mode statistics
-                if self.def_mode {
-                    if let Some(ref def) = self.def_data {
+                if self.def_mode
+                    && let Some(ref def) = self.def_data {
                         let total_components = def.components.len();
                         let missing_unique = self.missing_cells.len();
 
@@ -3262,7 +3265,6 @@ impl LefDefViewer {
                             });
                         }
                     }
-                }
             } else {
                 ui.label("No DEF file loaded");
             }
@@ -4264,17 +4266,16 @@ impl LefDefViewer {
                             if self.visible_layers.contains("LABEL")
                                 && self.zoom > 0.2
                                 && has_visible_shapes
+                                && let Some((min_x, min_y, max_x, max_y)) = pin_bounds
                             {
-                                if let Some((min_x, min_y, max_x, max_y)) = pin_bounds {
-                                    let pin_center =
-                                        egui::pos2((min_x + max_x) * 0.5, (min_y + max_y) * 0.5);
-                                    texts_to_render.push((
-                                        pin_center,
-                                        pin.name.clone(),
-                                        egui::FontId::monospace(12.0),
-                                        egui::Color32::WHITE,
-                                    ));
-                                }
+                                let pin_center =
+                                    egui::pos2((min_x + max_x) * 0.5, (min_y + max_y) * 0.5);
+                                texts_to_render.push((
+                                    pin_center,
+                                    pin.name.clone(),
+                                    egui::FontId::monospace(12.0),
+                                    egui::Color32::WHITE,
+                                ));
                             }
                         }
 
@@ -5168,10 +5169,10 @@ impl LefDefViewer {
         );
 
         // Apply rotation if needed
-        if positioning.angle != 0.0 {
-            if let egui::Shape::Text(text_shape) = &mut text_shape {
-                text_shape.angle = positioning.angle;
-            }
+        if positioning.angle != 0.0
+            && let egui::Shape::Text(text_shape) = &mut text_shape
+        {
+            text_shape.angle = positioning.angle;
         }
 
         // Add outline effect for white text by rendering multiple offset copies
@@ -5200,10 +5201,10 @@ impl LefDefViewer {
                 );
 
                 // Apply rotation to outline if needed
-                if positioning.angle != 0.0 {
-                    if let egui::Shape::Text(outline_shape) = &mut outline_shape {
-                        outline_shape.angle = positioning.angle;
-                    }
+                if positioning.angle != 0.0
+                    && let egui::Shape::Text(outline_shape) = &mut outline_shape
+                {
+                    outline_shape.angle = positioning.angle;
                 }
                 painter.add(outline_shape);
             }
@@ -5281,16 +5282,15 @@ impl eframe::App for LefDefViewer {
             start_time,
             show_progress,
         } = &self.loading_state
+            && *show_progress
         {
-            if *show_progress {
-                egui::TopBottomPanel::top("loading_bar").show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(format!("Loading {file_type} file: {file_name}"));
-                        ui.label(format!("({:.1}s)", start_time.elapsed().as_secs_f32()));
-                    });
+            egui::TopBottomPanel::top("loading_bar").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(format!("Loading {file_type} file: {file_name}"));
+                    ui.label(format!("({:.1}s)", start_time.elapsed().as_secs_f32()));
                 });
-            }
+            });
         }
 
         egui::SidePanel::left("left_panel")

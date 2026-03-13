@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2025 Huang Rui <vowstar@gmail.com>
 
 use nom::{
+    IResult, Parser,
     branch::alt,
     bytes::complete::{tag, take_until},
     character::complete::{alpha1, alphanumeric1, char, multispace0, space0, space1},
@@ -9,7 +10,6 @@ use nom::{
     multi::many0,
     number::complete::double,
     sequence::{delimited, pair},
-    IResult, Parser,
 };
 
 use super::{Lef, LefMacro, LefObstruction, LefPin, LefPolygon, LefPort, LefRect};
@@ -337,7 +337,9 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                         current_layer =
                                             pin_parts[j + 1].trim_end_matches(';').to_string();
                                         if use_type == "POWER" || use_type == "GROUND" {
-                                            println!("[DBG]       POWER/GROUND pin {pin_name} using layer: {current_layer}");
+                                            println!(
+                                                "[DBG]       POWER/GROUND pin {pin_name} using layer: {current_layer}"
+                                            );
                                         }
                                         break;
                                     }
@@ -365,7 +367,9 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                                 current_layer =
                                                     port_parts[1].trim_end_matches(';').to_string();
                                                 if use_type == "POWER" || use_type == "GROUND" {
-                                                    println!("[DBG]       POWER/GROUND pin {pin_name} using layer: {current_layer}");
+                                                    println!(
+                                                        "[DBG]       POWER/GROUND pin {pin_name} using layer: {current_layer}"
+                                                    );
                                                 }
                                             }
                                             "RECT" if port_parts.len() >= 5 => {
@@ -383,9 +387,13 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                                         yh,
                                                     });
                                                     if use_type == "POWER" || use_type == "GROUND" {
-                                                        println!("[DBG]       Added POWER/GROUND rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})");
+                                                        println!(
+                                                            "[DBG]       Added POWER/GROUND rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})"
+                                                        );
                                                     } else {
-                                                        println!("[DBG]       Added rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})");
+                                                        println!(
+                                                            "[DBG]       Added rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})"
+                                                        );
                                                     }
                                                 }
                                             }
@@ -456,11 +464,18 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                                         points,
                                                         is_hole,
                                                     });
-                                                    println!("[DBG]       Added polygon on {} with {} points ({}){}: {:?}",
-                                                           current_layer, polygons.last().unwrap().points.len(),
-                                                           if is_hole { "hole" } else { "solid" },
-                                                           if let Some(mask) = mask_num { format!(" MASK {mask}") } else { String::new() },
-                                                           polygons.last().unwrap().points);
+                                                    println!(
+                                                        "[DBG]       Added polygon on {} with {} points ({}){}: {:?}",
+                                                        current_layer,
+                                                        polygons.last().unwrap().points.len(),
+                                                        if is_hole { "hole" } else { "solid" },
+                                                        if let Some(mask) = mask_num {
+                                                            format!(" MASK {mask}")
+                                                        } else {
+                                                            String::new()
+                                                        },
+                                                        polygons.last().unwrap().points
+                                                    );
                                                 }
                                             }
                                             _ => {}
@@ -524,7 +539,9 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                         xh,
                                         yh,
                                     });
-                                    println!("[DBG]     Added OBS rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})");
+                                    println!(
+                                        "[DBG]     Added OBS rect on {current_layer}: ({xl:.1},{yl:.1}) -> ({xh:.1},{yh:.1})"
+                                    );
                                 }
                             }
                             "POLYGON" => {
@@ -590,7 +607,11 @@ fn parse_simple_macro(input: &str) -> IResult<&str, LefMacro> {
                                         current_layer,
                                         polygons.last().unwrap().points.len(),
                                         if is_hole { "hole" } else { "solid" },
-                                        if let Some(mask) = mask_num { format!(" MASK {mask}") } else { String::new() },
+                                        if let Some(mask) = mask_num {
+                                            format!(" MASK {mask}")
+                                        } else {
+                                            String::new()
+                                        },
                                         polygons.last().unwrap().points
                                     );
                                 }
